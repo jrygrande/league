@@ -1,8 +1,17 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from . import client
+from . import database
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await database.create_tables()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.get("/")
@@ -70,3 +79,9 @@ async def get_nfl_player_stats(season: str):
 @app.get("/player/{player_id}/aggregated_stats/{season}")
 async def get_player_aggregated_stats(player_id: str, season: str):
     return await client.get_player_aggregated_stats(player_id, season)
+
+@app.get("/league/{league_id}/matchups/{week}")
+async def get_league_matchups(league_id: str, week: int):
+    return await client.get_league_matchups(league_id, week)
+
+    return await client.get_player_performance_since_transaction(league_id, player_id, transaction_id)
