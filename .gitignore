@@ -1,0 +1,5 @@
+# Caches
+players.json
+
+# Environment
+.venv/
