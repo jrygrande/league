@@ -60,3 +60,13 @@ async def get_player_lifecycle(league_id: str, player_id: str):
 @app.get("/league/{league_id}/roster/{roster_id}/analysis")
 async def get_roster_analysis(league_id: str, roster_id: int):
     return await client.get_roster_analysis(league_id, roster_id)
+
+
+@app.get("/stats/nfl/{season}")
+async def get_nfl_player_stats(season: str):
+    return await client.get_player_weekly_stats(season)
+
+
+@app.get("/player/{player_id}/aggregated_stats/{season}")
+async def get_player_aggregated_stats(player_id: str, season: str):
+    return await client.get_player_aggregated_stats(player_id, season)

@@ -56,6 +56,56 @@ async def get_draft_picks(draft_id: str):
         return picks
 
 
+_player_weekly_stats_cache = {}
+
+
+async def get_player_weekly_stats(season: str):
+    if season in _player_weekly_stats_cache:
+        return _player_weekly_stats_cache[season]
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{API_URL}/stats/nfl/regular/{season}")
+            response.raise_for_status()
+            stats = response.json()
+            _player_weekly_stats_cache[season] = stats
+            return stats
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            _player_weekly_stats_cache[season] = {}
+            return {}
+        raise
+    except Exception as e:
+        print(f"An unexpected error occurred fetching stats for season {season}: {e}")
+        raise
+
+
+async def get_player_aggregated_stats(player_id: str, season: str):
+    all_season_total_stats_by_player = await get_player_weekly_stats(season)
+
+    total_points = 0.0
+    games_played = 0
+
+    player_total_stats = all_season_total_stats_by_player.get(player_id)
+
+    if player_total_stats:
+        if "pts_ppr" in player_total_stats:
+            total_points = player_total_stats["pts_ppr"]
+        if "gp" in player_total_stats:
+            games_played = player_total_stats["gp"]
+
+    avg_ppg = total_points / games_played if games_played > 0 else 0.0
+
+    return {
+        "player_id": player_id,
+        "season": season,
+        "total_points": round(total_points, 2),
+        "avg_ppg": round(avg_ppg, 2),
+    }
+
+
+
+
 async def get_league_transactions(league_id: str, week: int):
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{API_URL}/league/{league_id}/transactions/{week}")
