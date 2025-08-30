@@ -102,3 +102,58 @@ class PlayerStint(BaseModel):
     owner_username: str
     owner_display_name: str
     aggregated_stats: Dict[str, Any]
+
+
+class DraftPickInfo(BaseModel):
+    draft_id: str
+    pick_no: int
+    round: int
+    draft_slot: Optional[int] = None
+    player_id: Optional[str] = None
+    roster_id: Optional[int] = None
+    picked_by: Optional[str] = None
+    is_keeper: Optional[bool] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class DraftPickOwnership(BaseModel):
+    draft_id: str
+    pick_no: int
+    round: int
+    original_owner_roster_id: int
+    final_owner_roster_id: int
+    ownership_changes: List[Dict[str, Any]]  # List of trades that moved this pick
+    selected_player_id: Optional[str] = None
+    selected_player_name: Optional[str] = None
+
+
+class TradeAsset(BaseModel):
+    asset_type: str  # "player", "draft_pick", "faab"
+    asset_id: str    # player_id or pick identifier
+    asset_name: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class TradeNode(BaseModel):
+    transaction_id: str
+    timestamp: Optional[int] = None
+    date: Optional[str] = None
+    roster_ids: List[int]
+    assets_exchanged: List[TradeAsset]
+    connected_trades: List[str] = []  # List of transaction_ids of connected trades
+
+
+class TradeTree(BaseModel):
+    root_transaction_id: str
+    all_transactions: List[TradeNode]
+    total_assets_involved: int
+    leagues_involved: List[str]
+    timespan_days: Optional[int] = None
+
+
+class TradedPick(BaseModel):
+    season: str
+    round: int
+    roster_id: int  # Current owner
+    owner_id: int   # Original owner  
+    previous_owner_id: Optional[int] = None

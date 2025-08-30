@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 
 from . import database
 from .services import sleeper_service
-from .models.sleeper import User, League, Roster, Draft, Player, Stats, Transaction, Matchup, PlayerStint
+from .models.sleeper import User, League, Roster, Draft, Player, Stats, Transaction, Matchup, PlayerStint, DraftPickInfo, DraftPickOwnership, TradeAsset, TradeNode, TradeTree
 
 
 @asynccontextmanager
@@ -113,3 +113,62 @@ async def get_player_performance_between_transactions(league_id: str, player_id:
 @app.get("/analysis/league/{league_id}/player/{player_id}/stints", response_model=List[PlayerStint])
 async def get_player_stints(league_id: str, player_id: str):
     return await sleeper_service.get_player_stints_with_performance(league_id, player_id)
+
+
+@app.get("/draft/{draft_id}/picks")
+async def get_draft_picks(draft_id: str):
+    picks_data = await sleeper_service.client.get_draft_picks(draft_id)
+    return picks_data
+
+
+@app.get("/league/{league_id}/draft_picks/{season}", response_model=List[DraftPickInfo])
+async def get_league_draft_picks(league_id: str, season: str):
+    """Get all draft picks for a specific league and season."""
+    return await sleeper_service.get_league_draft_picks(league_id, season)
+
+
+@app.get("/analysis/league/{league_id}/trade/{transaction_id}/assets", response_model=List[TradeAsset])
+async def analyze_trade_assets_endpoint(league_id: str, transaction_id: str):
+    """Analyze what assets (players and picks) were involved in a specific trade."""
+    # Get the specific transaction
+    all_transactions = await sleeper_service.get_all_league_transactions(league_id)
+    target_transaction = next((tx for tx in all_transactions if tx.transaction_id == transaction_id), None)
+    
+    if not target_transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    # Get player data for name lookups
+    all_players_data = await sleeper_service.client.get_all_players()
+    all_players_map = {p_id: Player(**p_data) for p_id, p_data in all_players_data.items()} if all_players_data else {}
+    
+    return await sleeper_service.analyze_trade_assets(target_transaction, all_players_map, league_id)
+
+
+@app.get("/league/{league_id}/draft_picks/{season}/ownership", response_model=List[DraftPickOwnership])
+async def get_draft_pick_ownership_history(league_id: str, season: str):
+    """Get the ownership history for all draft picks in a league season, including trade history."""
+    return await sleeper_service.get_draft_pick_ownership_history(league_id, season)
+
+
+@app.get("/league/{league_id}/draft_picks/{season}/{pick_no}/journey")
+async def get_draft_pick_journey(league_id: str, season: str, pick_no: int):
+    """Get the complete journey of a specific draft pick with performance analysis."""
+    return await sleeper_service.get_draft_pick_journey(league_id, season, pick_no)
+
+
+@app.get("/league/{league_id}/trade_trees", response_model=List[TradeTree])
+async def get_connected_trades(league_id: str, time_window_hours: int = 24):
+    """Find connected trade relationships within a league."""
+    return await sleeper_service.find_connected_trades(league_id, time_window_hours)
+
+
+@app.get("/analysis/league/{league_id}/trade_chain/{transaction_id}")
+async def analyze_trade_chain_impact(league_id: str, transaction_id: str):
+    """Analyze the impact of a trade chain starting from a specific transaction."""
+    return await sleeper_service.analyze_trade_chain_impact(league_id, transaction_id)
+
+
+@app.get("/league/{league_id}/historical_coverage")
+async def get_historical_data_coverage(league_id: str):
+    """Validate historical data coverage for a league."""
+    return await sleeper_service.get_historical_data_coverage(league_id)

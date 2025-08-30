@@ -128,3 +128,15 @@ async def get_league_history(league_id: str):
 async def get_league_matchups(league_id: str, week: int):
     url = f"{API_URL}/league/{league_id}/matchups/{week}"
     return await get(url)
+
+
+async def get_league_traded_picks(league_id: str):
+    """Get all traded draft picks for a league."""
+    url = f"{API_URL}/league/{league_id}/traded_picks"
+    return await get(url)
+
+
+async def get_draft_traded_picks(draft_id: str):
+    """Get traded picks for a specific draft."""
+    url = f"{API_URL}/draft/{draft_id}/traded_picks"
+    return await get(url)

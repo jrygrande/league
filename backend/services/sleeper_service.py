@@ -14,6 +14,12 @@ from ..models.sleeper import (
     Transaction,
     Matchup,
     PlayerStint,
+    DraftPickInfo,
+    DraftPickOwnership,
+    TradeAsset,
+    TradeNode,
+    TradeTree,
+    TradedPick,
 )
 
 # These constants will eventually move to config.py
@@ -63,7 +69,8 @@ async def get_player_aggregated_stats(player_id: str, season: str) -> Dict[str, 
     }
 
 
-async def get_all_league_transactions(league_id: str) -> List[Transaction]:
+async def get_single_season_transactions(league_id: str) -> List[Transaction]:
+    """Get all transactions for a single season (league ID)."""
     transaction_tasks = [client.get_league_transactions(league_id, week) for week in range(1, 19)]
     weekly_transactions_results = await asyncio.gather(*transaction_tasks, return_exceptions=True)
 
@@ -75,6 +82,29 @@ async def get_all_league_transactions(league_id: str) -> List[Transaction]:
                 all_transactions.append(Transaction(**tx_data))
         # Optionally log other exceptions if needed
 
+    return all_transactions
+
+
+async def get_all_league_transactions(league_id: str) -> List[Transaction]:
+    """Get all transactions across all seasons in the league's history."""
+    # Get the full league history
+    league_history_data = await client.get_league_history(league_id)
+    league_history = [League(**item) for item in league_history_data] if league_history_data else []
+    
+    if not league_history:
+        # Fallback to single season if no history available
+        return await get_single_season_transactions(league_id)
+    
+    # Fetch transactions from all seasons in parallel
+    transaction_tasks = [get_single_season_transactions(season_league.league_id) for season_league in league_history]
+    all_seasons_transactions = await asyncio.gather(*transaction_tasks, return_exceptions=True)
+    
+    # Flatten all transactions from all seasons
+    all_transactions = []
+    for season_transactions in all_seasons_transactions:
+        if isinstance(season_transactions, list):
+            all_transactions.extend(season_transactions)
+    
     return all_transactions
 
 
@@ -225,9 +255,7 @@ async def get_player_performance_since_transaction(league_id: str, player_id: st
         return {"error": f"Could not find league history for league {league_id}"}
 
     # 2. Fetch all transactions from all seasons in the league's history
-    transaction_tasks = [get_all_league_transactions(season.league_id) for season in league_history]
-    all_seasons_transactions = await asyncio.gather(*transaction_tasks)
-    all_transactions = [tx for season_txs in all_seasons_transactions for tx in season_txs]
+    all_transactions = await get_all_league_transactions(league_id)
 
     # 3. Find the target transaction and its timestamp
     target_transaction = next((tx for tx in all_transactions if tx.transaction_id == transaction_id), None)
@@ -320,9 +348,7 @@ async def get_player_performance_between_transactions(league_id: str, player_id:
         return {"error": f"Could not find league history for league {league_id}"}
 
     # 2. Fetch all transactions from all seasons in the league's history
-    transaction_tasks = [get_all_league_transactions(season.league_id) for season in league_history]
-    all_seasons_transactions = await asyncio.gather(*transaction_tasks)
-    all_transactions = [tx for season_txs in all_seasons_transactions for tx in season_txs]
+    all_transactions = await get_all_league_transactions(league_id)
 
     # 3. Find the target transactions and their timestamps
     target_transaction_x = next((tx for tx in all_transactions if tx.transaction_id == transaction_id_x), None)
@@ -640,3 +666,602 @@ async def get_player_stints_with_performance(league_id: str, player_id: str) -> 
         }
 
     return stints
+
+
+async def get_league_draft_picks(league_id: str, season: str) -> List[DraftPickInfo]:
+    """Get all draft picks for a specific league and season."""
+    league_history_data = await client.get_league_history(league_id)
+    league_history = [League(**item) for item in league_history_data] if league_history_data else []
+    
+    # Find the league for the specified season
+    target_league = next((league for league in league_history if league.season == season), None)
+    if not target_league:
+        return []
+    
+    # Get drafts for that season
+    drafts_data = await client.get_league_drafts(target_league.league_id)
+    drafts = [Draft(**d) for d in drafts_data] if drafts_data else []
+    
+    all_picks = []
+    for draft in drafts:
+        picks_data = await client.get_draft_picks(draft.draft_id)
+        if picks_data:
+            for pick_data in picks_data:
+                pick = DraftPickInfo(
+                    draft_id=pick_data.get("draft_id"),
+                    pick_no=pick_data.get("pick_no"),
+                    round=pick_data.get("round"),
+                    draft_slot=pick_data.get("draft_slot"),
+                    player_id=pick_data.get("player_id"),
+                    roster_id=pick_data.get("roster_id"),
+                    picked_by=pick_data.get("picked_by"),
+                    is_keeper=pick_data.get("is_keeper"),
+                    metadata=pick_data.get("metadata")
+                )
+                all_picks.append(pick)
+    
+    return all_picks
+
+
+def _is_draft_pick_identifier(asset_id: str) -> bool:
+    """Check if an asset ID represents a draft pick."""
+    # In Sleeper, draft picks are often represented as negative numbers
+    # or specific patterns like "2024_1_01" (year_round_pick)
+    try:
+        # Check for negative numbers (common draft pick representation)
+        if int(asset_id) < 0:
+            return True
+    except ValueError:
+        pass
+    
+    # Check for pick identifier patterns (year_round_pick format)
+    if '_' in asset_id:
+        parts = asset_id.split('_')
+        if len(parts) == 3:
+            try:
+                year = int(parts[0])
+                round_num = int(parts[1])
+                pick_num = int(parts[2])
+                # Reasonable ranges for year, round, pick
+                if 2020 <= year <= 2030 and 1 <= round_num <= 10 and 1 <= pick_num <= 20:
+                    return True
+            except ValueError:
+                pass
+    
+    return False
+
+
+def _parse_draft_pick_identifier(asset_id: str) -> Dict[str, Any]:
+    """Parse a draft pick identifier to extract year, round, pick information."""
+    pick_info = {"asset_id": asset_id, "year": None, "round": None, "pick": None}
+    
+    try:
+        # Handle negative number format (often league-specific pick IDs)
+        if int(asset_id) < 0:
+            pick_info["type"] = "negative_id"
+            return pick_info
+    except ValueError:
+        pass
+    
+    # Handle structured format like "2024_1_01"
+    if '_' in asset_id:
+        parts = asset_id.split('_')
+        if len(parts) == 3:
+            try:
+                pick_info["year"] = int(parts[0])
+                pick_info["round"] = int(parts[1])
+                pick_info["pick"] = int(parts[2])
+                pick_info["type"] = "structured"
+                return pick_info
+            except ValueError:
+                pass
+    
+    pick_info["type"] = "unknown"
+    return pick_info
+
+
+async def analyze_trade_assets(transaction: Transaction, all_players_map: Dict[str, Player], league_id: str = None) -> List[TradeAsset]:
+    """Analyze a trade transaction to identify all assets (players and picks) involved."""
+    assets = []
+    
+    # Analyze adds
+    if transaction.adds:
+        for asset_id, roster_id in transaction.adds.items():
+            if _is_draft_pick_identifier(asset_id):
+                pick_info = _parse_draft_pick_identifier(asset_id)
+                assets.append(TradeAsset(
+                    asset_type="draft_pick",
+                    asset_id=asset_id,
+                    asset_name=f"Draft Pick ({pick_info.get('year', '?')}, R{pick_info.get('round', '?')})",
+                    metadata=pick_info
+                ))
+            else:
+                # Regular player
+                player_info = all_players_map.get(asset_id)
+                player_name = None
+                if player_info:
+                    player_name = f"{player_info.first_name or ''} {player_info.last_name or ''}".strip()
+                
+                assets.append(TradeAsset(
+                    asset_type="player",
+                    asset_id=asset_id,
+                    asset_name=player_name or f"Player {asset_id}",
+                    metadata={"roster_id": roster_id}
+                ))
+    
+    # Analyze drops (same logic but marked as going the other direction)
+    if transaction.drops:
+        for asset_id, roster_id in transaction.drops.items():
+            if _is_draft_pick_identifier(asset_id):
+                pick_info = _parse_draft_pick_identifier(asset_id)
+                assets.append(TradeAsset(
+                    asset_type="draft_pick",
+                    asset_id=asset_id,
+                    asset_name=f"Draft Pick ({pick_info.get('year', '?')}, R{pick_info.get('round', '?')})",
+                    metadata={**pick_info, "direction": "dropped", "roster_id": roster_id}
+                ))
+            else:
+                player_info = all_players_map.get(asset_id)
+                player_name = None
+                if player_info:
+                    player_name = f"{player_info.first_name or ''} {player_info.last_name or ''}".strip()
+                
+                assets.append(TradeAsset(
+                    asset_type="player",
+                    asset_id=asset_id,
+                    asset_name=player_name or f"Player {asset_id}",
+                    metadata={"roster_id": roster_id, "direction": "dropped"}
+                ))
+    
+    # Analyze traded picks if league_id is provided
+    if league_id and transaction.roster_ids and len(transaction.roster_ids) >= 2:
+        try:
+            # Get all traded picks across all seasons in league history
+            league_history_data = await client.get_league_history(league_id)
+            league_history = [League(**item) for item in league_history_data] if league_history_data else []
+            
+            # Fetch traded picks from all seasons
+            all_traded_picks = []
+            for season_league in league_history:
+                season_picks_data = await client.get_league_traded_picks(season_league.league_id)
+                if season_picks_data:
+                    all_traded_picks.extend([TradedPick(**pick) for pick in season_picks_data])
+            
+            if all_traded_picks:
+                
+                # Find picks that might have been involved in this trade based on timing
+                transaction_timestamp = transaction.status_updated
+                if transaction_timestamp:
+                    # Look for picks where ownership change might coincide with this transaction
+                    # This is an approximation since we don't have exact transaction IDs for pick trades
+                    transaction_time = datetime.fromtimestamp(transaction_timestamp / 1000)
+                    
+                    for pick in all_traded_picks:
+                        # Check if any of the rosters in this transaction were involved in pick ownership
+                        if (pick.roster_id in transaction.roster_ids and 
+                            pick.previous_owner_id and pick.previous_owner_id in transaction.roster_ids):
+                            
+                            # This pick was likely part of this trade
+                            pick_name = f"{pick.season} Round {pick.round}"
+                            direction = "to_" + str(pick.roster_id)
+                            
+                            assets.append(TradeAsset(
+                                asset_type="traded_pick",
+                                asset_id=f"{pick.season}_{pick.round}_{pick.roster_id}",
+                                asset_name=pick_name,
+                                metadata={
+                                    "season": pick.season,
+                                    "round": pick.round,
+                                    "roster_id": pick.roster_id,
+                                    "previous_owner_id": pick.previous_owner_id,
+                                    "original_owner_id": pick.owner_id,
+                                    "direction": direction
+                                }
+                            ))
+        except Exception:
+            # If traded picks analysis fails, continue with just player assets
+            pass
+    
+    return assets
+
+
+async def get_draft_pick_ownership_history(league_id: str, season: str) -> List[DraftPickOwnership]:
+    """
+    Get the ownership history for all draft picks in a league season.
+    Tracks how draft picks moved between teams through trades.
+    """
+    # Get all draft picks for the season
+    draft_picks = await get_league_draft_picks(league_id, season)
+    
+    # Get all transactions for the league across all years
+    all_transactions = await get_all_league_transactions(league_id)
+    
+    # Get player data for name lookups
+    all_players_data = await client.get_all_players()
+    all_players_map = {p_id: Player(**p_data) for p_id, p_data in all_players_data.items()} if all_players_data else {}
+    
+    ownership_histories = []
+    
+    for pick in draft_picks:
+        # Create draft pick identifier based on season and pick info
+        pick_identifier = f"{season}_{pick.round}_{pick.pick_no:02d}"
+        
+        # Find all transactions that involved this draft pick
+        ownership_changes = []
+        original_owner_roster_id = pick.roster_id or pick.draft_slot  # Fallback to draft slot if roster_id not available
+        final_owner_roster_id = original_owner_roster_id
+        
+        # Search through all transactions for this pick
+        for transaction in all_transactions:
+            if transaction.type == "trade":
+                pick_involved = False
+                transaction_roster_ids = []
+                
+                # Check if this pick was involved in the trade
+                if transaction.adds:
+                    for asset_id, receiving_roster_id in transaction.adds.items():
+                        if _is_draft_pick_identifier(asset_id):
+                            pick_info = _parse_draft_pick_identifier(asset_id)
+                            # Match by year, round, and pick number
+                            if (pick_info.get("year") == season and 
+                                pick_info.get("round") == pick.round and
+                                pick_info.get("pick_no") == pick.pick_no):
+                                pick_involved = True
+                                transaction_roster_ids.append(receiving_roster_id)
+                                final_owner_roster_id = receiving_roster_id
+                
+                if transaction.drops:
+                    for asset_id, giving_roster_id in transaction.drops.items():
+                        if _is_draft_pick_identifier(asset_id):
+                            pick_info = _parse_draft_pick_identifier(asset_id)
+                            # Match by year, round, and pick number  
+                            if (pick_info.get("year") == season and 
+                                pick_info.get("round") == pick.round and
+                                pick_info.get("pick_no") == pick.pick_no):
+                                pick_involved = True
+                                transaction_roster_ids.append(giving_roster_id)
+                
+                if pick_involved:
+                    ownership_changes.append({
+                        "transaction_id": transaction.transaction_id,
+                        "timestamp": transaction.status_updated,
+                        "roster_ids_involved": transaction_roster_ids,
+                        "type": "trade"
+                    })
+        
+        # Determine selected player info
+        selected_player_name = None
+        if pick.player_id and pick.player_id in all_players_map:
+            player = all_players_map[pick.player_id]
+            selected_player_name = f"{player.first_name or ''} {player.last_name or ''}".strip()
+        
+        ownership_history = DraftPickOwnership(
+            draft_id=pick.draft_id,
+            pick_no=pick.pick_no,
+            round=pick.round,
+            original_owner_roster_id=original_owner_roster_id,
+            final_owner_roster_id=final_owner_roster_id,
+            ownership_changes=ownership_changes,
+            selected_player_id=pick.player_id,
+            selected_player_name=selected_player_name
+        )
+        
+        ownership_histories.append(ownership_history)
+    
+    return ownership_histories
+
+
+async def get_draft_pick_journey(league_id: str, season: str, pick_no: int) -> Dict[str, Any]:
+    """
+    Get the complete journey of a specific draft pick, including performance analysis
+    of the player drafted with that pick.
+    """
+    # Get the specific draft pick
+    draft_picks = await get_league_draft_picks(league_id, season)
+    target_pick = next((pick for pick in draft_picks if pick.pick_no == pick_no), None)
+    
+    if not target_pick:
+        return {"error": f"Draft pick #{pick_no} not found for season {season}"}
+    
+    # Get ownership history for this specific pick
+    ownership_histories = await get_draft_pick_ownership_history(league_id, season)
+    pick_ownership = next((hist for hist in ownership_histories if hist.pick_no == pick_no), None)
+    
+    # Get player performance data if a player was selected
+    player_performance = None
+    if target_pick.player_id:
+        try:
+            # Get player stint performance in this league
+            player_stints = await get_player_stints_with_performance(league_id, target_pick.player_id)
+            
+            # Get aggregated career stats across all seasons
+            league_history_data = await client.get_league_history(league_id)
+            league_history = [League(**item) for item in league_history_data] if league_history_data else []
+            seasons = list(set(league.season for league in league_history if league.season))
+            
+            career_stats = {}
+            for season_year in seasons:
+                season_stats = await get_player_aggregated_stats(target_pick.player_id, season_year)
+                career_stats[season_year] = season_stats
+            
+            player_performance = {
+                "stints": player_stints,
+                "career_stats_by_season": career_stats
+            }
+        except Exception as e:
+            player_performance = {"error": f"Failed to fetch player performance: {str(e)}"}
+    
+    # Get roster information for context
+    league_rosters_data = await client.get_league_rosters(league_id)
+    roster_lookup = {}
+    if league_rosters_data:
+        for roster_data in league_rosters_data:
+            try:
+                roster = Roster(**roster_data)
+                roster_lookup[roster.roster_id] = {
+                    "roster_id": roster.roster_id,
+                    "owner_id": roster.owner_id,
+                    "team_name": (roster.metadata or {}).get("team_name", "Unknown Team")
+                }
+            except Exception:
+                continue
+    
+    # Get user info for current owner
+    current_owner_info = None
+    if pick_ownership and pick_ownership.final_owner_roster_id in roster_lookup:
+        roster_info = roster_lookup[pick_ownership.final_owner_roster_id]
+        if roster_info["owner_id"]:
+            user_data = await client.get_user_by_user_id(roster_info["owner_id"])
+            if user_data:
+                current_owner_info = {
+                    "roster_id": roster_info["roster_id"],
+                    "team_name": roster_info["team_name"],
+                    "username": user_data.get("username"),
+                    "display_name": user_data.get("display_name")
+                }
+    
+    return {
+        "draft_pick_info": target_pick,
+        "ownership_history": pick_ownership,
+        "current_owner": current_owner_info,
+        "player_performance": player_performance,
+        "draft_context": {
+            "season": season,
+            "round": target_pick.round,
+            "pick_in_round": pick_no - ((target_pick.round - 1) * len(roster_lookup)) if roster_lookup else pick_no,
+            "total_picks_analyzed": len(draft_picks)
+        }
+    }
+
+
+async def find_connected_trades(league_id: str, time_window_hours: int = 24) -> List[TradeTree]:
+    """
+    Find connected trade relationships within a league.
+    Trades are considered connected if they involve the same assets within a time window.
+    """
+    # Get all transactions
+    all_transactions = await get_all_league_transactions(league_id)
+    
+    # Filter only trade transactions
+    trade_transactions = [tx for tx in all_transactions if tx.type == "trade"]
+    
+    # Sort by timestamp
+    trade_transactions.sort(key=lambda x: x.status_updated or 0)
+    
+    # Get player data for asset analysis
+    all_players_data = await client.get_all_players()
+    all_players_map = {p_id: Player(**p_data) for p_id, p_data in all_players_data.items()} if all_players_data else {}
+    
+    # Build trade nodes with asset information
+    trade_nodes = []
+    for transaction in trade_transactions:
+        assets = await analyze_trade_assets(transaction, all_players_map, league_id)
+        
+        trade_node = TradeNode(
+            transaction_id=transaction.transaction_id,
+            timestamp=transaction.status_updated,
+            date=datetime.fromtimestamp(transaction.status_updated / 1000).strftime("%Y-%m-%d %H:%M:%S") if transaction.status_updated else None,
+            roster_ids=transaction.roster_ids or [],
+            assets_exchanged=assets
+        )
+        trade_nodes.append(trade_node)
+    
+    # Find connected trades based on asset overlap and time proximity
+    trade_trees = []
+    processed_trades = set()
+    
+    for i, root_trade in enumerate(trade_nodes):
+        if root_trade.transaction_id in processed_trades:
+            continue
+        
+        # Start a new trade tree
+        connected_trades = [root_trade]
+        processed_trades.add(root_trade.transaction_id)
+        
+        # Find trades connected to this one
+        root_assets = set(asset.asset_id for asset in root_trade.assets_exchanged)
+        root_timestamp = root_trade.timestamp or 0
+        
+        # Check subsequent trades for connections
+        for j, candidate_trade in enumerate(trade_nodes[i+1:], i+1):
+            if candidate_trade.transaction_id in processed_trades:
+                continue
+            
+            candidate_assets = set(asset.asset_id for asset in candidate_trade.assets_exchanged)
+            candidate_timestamp = candidate_trade.timestamp or 0
+            
+            # Check for asset overlap
+            asset_overlap = root_assets.intersection(candidate_assets)
+            
+            # Check time proximity (within specified hours)
+            time_diff_hours = abs(candidate_timestamp - root_timestamp) / (1000 * 60 * 60)
+            
+            if asset_overlap and time_diff_hours <= time_window_hours:
+                # This trade is connected
+                connected_trades.append(candidate_trade)
+                processed_trades.add(candidate_trade.transaction_id)
+                
+                # Update the root trade's connected trades list
+                root_trade.connected_trades.append(candidate_trade.transaction_id)
+                candidate_trade.connected_trades.append(root_trade.transaction_id)
+                
+                # Expand asset set for future matching
+                root_assets.update(candidate_assets)
+        
+        # Create a trade tree if there are assets involved (be more inclusive)
+        if len(root_assets) > 0:
+            # Calculate timespan
+            timestamps = [trade.timestamp for trade in connected_trades if trade.timestamp]
+            timespan_days = None
+            if len(timestamps) > 1:
+                timespan_days = int((max(timestamps) - min(timestamps)) / (1000 * 60 * 60 * 24))
+            
+            # Get unique leagues involved
+            leagues_involved = list(set([league_id]))  # For now, single league
+            
+            trade_tree = TradeTree(
+                root_transaction_id=root_trade.transaction_id,
+                all_transactions=connected_trades,
+                total_assets_involved=len(root_assets),
+                leagues_involved=leagues_involved,
+                timespan_days=timespan_days
+            )
+            trade_trees.append(trade_tree)
+    
+    return trade_trees
+
+
+async def analyze_trade_chain_impact(league_id: str, transaction_id: str) -> Dict[str, Any]:
+    """
+    Analyze the impact of a trade chain starting from a specific transaction.
+    Shows how assets flow through multiple connected trades.
+    """
+    # Find all trade trees
+    trade_trees = await find_connected_trades(league_id)
+    
+    # Find the trade tree containing this transaction
+    target_tree = None
+    for tree in trade_trees:
+        if tree.root_transaction_id == transaction_id or any(
+            trade.transaction_id == transaction_id for trade in tree.all_transactions
+        ):
+            target_tree = tree
+            break
+    
+    if not target_tree:
+        return {"error": f"Transaction {transaction_id} not found in any trade tree"}
+    
+    # Analyze asset flow through the chain
+    asset_flow = {}
+    roster_impact = {}
+    
+    for trade in target_tree.all_transactions:
+        for asset in trade.assets_exchanged:
+            asset_id = asset.asset_id
+            if asset_id not in asset_flow:
+                asset_flow[asset_id] = {
+                    "asset_info": asset,
+                    "trade_history": []
+                }
+            
+            asset_flow[asset_id]["trade_history"].append({
+                "transaction_id": trade.transaction_id,
+                "timestamp": trade.timestamp,
+                "date": trade.date
+            })
+        
+        # Track roster involvement
+        for roster_id in trade.roster_ids:
+            if roster_id not in roster_impact:
+                roster_impact[roster_id] = {
+                    "trades_involved": 0,
+                    "assets_gained": [],
+                    "assets_lost": []
+                }
+            roster_impact[roster_id]["trades_involved"] += 1
+    
+    # Calculate net gains/losses per roster
+    for trade in target_tree.all_transactions:
+        # This is simplified - in reality we'd need to parse adds/drops more carefully
+        for asset in trade.assets_exchanged:
+            metadata = asset.metadata or {}
+            roster_id = metadata.get("roster_id")
+            direction = metadata.get("direction", "added")
+            
+            if roster_id and roster_id in roster_impact:
+                if direction == "dropped":
+                    roster_impact[roster_id]["assets_lost"].append(asset)
+                else:
+                    roster_impact[roster_id]["assets_gained"].append(asset)
+    
+    return {
+        "trade_tree": target_tree,
+        "asset_flow": asset_flow,
+        "roster_impact": roster_impact,
+        "chain_summary": {
+            "total_trades": len(target_tree.all_transactions),
+            "total_assets": target_tree.total_assets_involved,
+            "timespan_days": target_tree.timespan_days,
+            "start_date": min([t.date for t in target_tree.all_transactions if t.date], default=None),
+            "end_date": max([t.date for t in target_tree.all_transactions if t.date], default=None)
+        }
+    }
+
+
+async def get_historical_data_coverage(league_id: str) -> Dict[str, Any]:
+    """
+    Validate historical data coverage for a league.
+    Shows which seasons have data available and transaction counts.
+    """
+    # Get league history
+    league_history_data = await client.get_league_history(league_id)
+    league_history = [League(**item) for item in league_history_data] if league_history_data else []
+    
+    if not league_history:
+        return {"error": f"No league history found for league {league_id}"}
+    
+    coverage_info = []
+    total_transactions = 0
+    
+    # Check each season
+    for season_league in league_history:
+        try:
+            # Get transactions for this season
+            season_transactions = await get_single_season_transactions(season_league.league_id)
+            transaction_count = len(season_transactions)
+            total_transactions += transaction_count
+            
+            # Get draft information if available
+            drafts_data = await client.get_league_drafts(season_league.league_id)
+            drafts_count = len(drafts_data) if drafts_data else 0
+            
+            coverage_info.append({
+                "season": season_league.season,
+                "league_id": season_league.league_id,
+                "league_name": season_league.name,
+                "transactions_count": transaction_count,
+                "drafts_count": drafts_count,
+                "status": season_league.status,
+                "has_data": transaction_count > 0 or drafts_count > 0
+            })
+        except Exception as e:
+            coverage_info.append({
+                "season": season_league.season,
+                "league_id": season_league.league_id,
+                "league_name": season_league.name,
+                "transactions_count": 0,
+                "drafts_count": 0,
+                "status": "error",
+                "has_data": False,
+                "error": str(e)
+            })
+    
+    # Sort by season (newest first)
+    coverage_info.sort(key=lambda x: x["season"], reverse=True)
+    
+    return {
+        "total_seasons": len(coverage_info),
+        "total_transactions": total_transactions,
+        "seasons_with_data": len([s for s in coverage_info if s["has_data"]]),
+        "coverage_by_season": coverage_info
+    }
