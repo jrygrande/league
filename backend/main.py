@@ -84,4 +84,12 @@ async def get_player_aggregated_stats(player_id: str, season: str):
 async def get_league_matchups(league_id: str, week: int):
     return await client.get_league_matchups(league_id, week)
 
+
+@app.get("/analysis/league/{league_id}/player/{player_id}/since_transaction/{transaction_id}")
+async def get_player_performance_since_transaction(league_id: str, player_id: str, transaction_id: str):
     return await client.get_player_performance_since_transaction(league_id, player_id, transaction_id)
+
+
+@app.get("/analysis/league/{league_id}/player/{player_id}/between_transactions/{transaction_id_x}/{transaction_id_y}")
+async def get_player_performance_between_transactions(league_id: str, player_id: str, transaction_id_x: str, transaction_id_y: str):
+    return await client.get_player_performance_between_transactions(league_id, player_id, transaction_id_x, transaction_id_y)

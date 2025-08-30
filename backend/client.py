@@ -278,6 +278,17 @@ async def get_league_matchups(league_id: str, week: int):
     url = f"{API_URL}/league/{league_id}/matchups/{week}"
     return await get(url)
 
+
+async def get_all_league_matchups(league_id: str):
+    matchup_tasks = [get_league_matchups(league_id, week) for week in range(1, 19)]
+    weekly_matchups_results = await asyncio.gather(*matchup_tasks, return_exceptions=True)
+
+    all_matchups = []
+    for result in weekly_matchups_results:
+        if isinstance(result, list):
+            all_matchups.extend(result)
+    return all_matchups
+
 from datetime import datetime, timedelta
 
 def get_week_start_date(season: int, week: int) -> datetime:
