@@ -121,3 +121,30 @@ pytest -v
 - Uses `TestClient` from FastAPI
 - Test constants defined for real league/player/transaction IDs
 - Focus on integration testing of endpoints
+
+## Frontend Development (In Progress)
+
+### Implementation Tracking
+When working on the frontend implementation, **ALWAYS reference** the `FRONTEND_IMPLEMENTATION_PLAN.md` file for the complete roadmap and checklist.
+
+#### Progress Tracking Pattern
+1. **Use TodoWrite tool** to track active tasks from the implementation plan
+2. **Check off items** in `FRONTEND_IMPLEMENTATION_PLAN.md` as they are completed
+3. **Update phase status** (✅/❌) in the plan document
+4. **Reference specific sections** when working on components
+
+#### Current Implementation Phase
+- **Phase 1**: Project Setup & Infrastructure
+- **Active Branch**: `player-lineage-viz` 
+- **Next Steps**: Initialize Next.js project, configure dependencies
+
+#### Key Frontend Goals
+- Username entry → League selection → Player search → Interactive visualization
+- Technology stack: Next.js + TypeScript + shadcn/ui + TanStack Query + React Flow
+- Mobile-responsive design with accessibility support
+
+#### Implementation Rules
+- **Always check** the plan document before starting new components
+- **Update progress markers** in the plan as work is completed
+- **Use TodoWrite** for session-specific task tracking
+- **Follow the established patterns** from the technical framework
