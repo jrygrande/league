@@ -70,6 +70,7 @@ async def get_all_league_transactions(league_id: str) -> List[Transaction]:
     for result in weekly_transactions_results:
         if isinstance(result, list):
             for tx_data in result:
+                tx_data["league_id"] = league_id
                 all_transactions.append(Transaction(**tx_data))
         # Optionally log other exceptions if needed
 
@@ -197,9 +198,11 @@ async def get_all_league_matchups(league_id: str) -> List[Matchup]:
     weekly_matchups_results = await asyncio.gather(*matchup_tasks, return_exceptions=True)
 
     all_matchups: List[Matchup] = []
-    for result in weekly_matchups_results:
+    for i, result in enumerate(weekly_matchups_results):
         if isinstance(result, list):
             for matchup_data in result:
+                matchup_data["league_id"] = league_id
+                matchup_data["week"] = i + 1
                 all_matchups.append(Matchup(**matchup_data))
     return all_matchups
 
@@ -235,7 +238,7 @@ async def get_player_performance_since_transaction(league_id: str, player_id: st
     # 4. Get player data across all seasons
     seasons = [league.season for league in league_history if league.season]
     stats_tasks = [get_all_player_weekly_stats_for_season(season) for season in seasons]
-    matchup_tasks = [client.get_league_matchups(season_league.league_id) for season_league in league_history]
+    matchup_tasks = [get_all_league_matchups(season_league.league_id) for season_league in league_history]
 
     all_seasons_stats_results = await asyncio.gather(*stats_tasks)
     await asyncio.gather(*matchup_tasks) # Removed assignment to all_seasons_matchup_results
@@ -270,7 +273,7 @@ async def get_player_performance_since_transaction(league_id: str, player_id: st
 
         if season_year not in analysis[period][player_status]:
             analysis[period][player_status][season_year] = []
-        analysis[period][player_status][season_year].append(stats.dict()) # Convert Pydantic model back to dict for analysis
+        analysis[period][player_status][season_year].append(stats.model_dump()) # Convert Pydantic model back to dict for analysis
 
     # 7. Summarize the results
     summary = {}
@@ -281,7 +284,7 @@ async def get_player_performance_since_transaction(league_id: str, player_id: st
             games_played_overall = 0
 
             for season_year, weekly_scores in season_data.items():
-                total_points_season = sum(s.get("pts_ppr", 0) for s in weekly_scores if s)
+                total_points_season = sum(s.get("pts_ppr", 0) or 0 for s in weekly_scores if s)
                 games_played_season = len(weekly_scores)
                 avg_ppg_season = total_points_season / games_played_season if games_played_season > 0 else 0
 
@@ -334,12 +337,11 @@ async def get_player_performance_between_transactions(league_id: str, player_id:
     # Ensure transaction_date_x is before transaction_date_y
     if transaction_date_x > transaction_date_y:
         transaction_date_x, transaction_date_y = transaction_date_y, transaction_date_x
-        transaction_id_x, transaction_id_y = transaction_id_y, transaction_id_x
 
     # 4. Get player data across all seasons
     seasons = [league.season for league in league_history if league.season]
     stats_tasks = [get_all_player_weekly_stats_for_season(season) for season in seasons]
-    matchup_tasks = [client.get_league_matchups(season_league.league_id) for season_league in league_history]
+    matchup_tasks = [get_all_league_matchups(season_league.league_id) for season_league in league_history]
 
     all_seasons_stats_results = await asyncio.gather(*stats_tasks)
     await asyncio.gather(*matchup_tasks) # Removed assignment to all_seasons_matchup_results
@@ -372,7 +374,7 @@ async def get_player_performance_between_transactions(league_id: str, player_id:
 
             if season_year not in analysis["between_transactions"][player_status]:
                 analysis["between_transactions"][player_status][season_year] = []
-            analysis["between_transactions"][player_status][season_year].append(stats.dict()) # Convert Pydantic model back to dict for analysis
+            analysis["between_transactions"][player_status][season_year].append(stats.model_dump()) # Convert Pydantic model back to dict for analysis
 
     # 7. Summarize the results
     summary = {}
@@ -383,7 +385,7 @@ async def get_player_performance_between_transactions(league_id: str, player_id:
             games_played_overall = 0
 
             for season_year, weekly_scores in season_data.items():
-                total_points_season = sum(s.get("pts_ppr", 0) for s in weekly_scores if s)
+                total_points_season = sum(s.get("pts_ppr", 0) or 0 for s in weekly_scores if s)
                 games_played_season = len(weekly_scores)
                 avg_ppg_season = total_points_season / games_played_season if games_played_season > 0 else 0
 

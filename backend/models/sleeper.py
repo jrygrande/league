@@ -80,11 +80,11 @@ class Transaction(BaseModel):
     adds: Optional[Dict[str, Any]] = None
     drops: Optional[Dict[str, Any]] = None
     roster_ids: Optional[List[int]] = None
-    metadata: Dict[str, Any]
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class Matchup(BaseModel):
-    matchup_id: int
+    matchup_id: Optional[int] = None
     league_id: str
     week: int
     roster_id: int
