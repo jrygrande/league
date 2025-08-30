@@ -140,3 +140,9 @@ async def get_draft_traded_picks(draft_id: str):
     """Get traded picks for a specific draft."""
     url = f"{API_URL}/draft/{draft_id}/traded_picks"
     return await get(url)
+
+
+async def get_draft(draft_id: str):
+    """Get draft configuration including draft order."""
+    url = f"{API_URL}/draft/{draft_id}"
+    return await get(url)

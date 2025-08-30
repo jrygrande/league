@@ -2622,54 +2622,128 @@ async def _trace_recursive_branches(assets_received: List[Dict[str, Any]], roste
     return sub_branches
 
 
+async def _get_roster_to_draft_slot_mapping(draft_id: str, league_id: str) -> Dict[int, int]:
+    """
+    Get mapping of roster_id to original draft_slot based on draft configuration.
+    This tells us which roster originally owned which draft position.
+    """
+    try:
+        # Get draft configuration
+        draft_config = await client.get_draft(draft_id)
+        if not draft_config or "draft_order" not in draft_config:
+            return {}
+        
+        draft_order = draft_config["draft_order"]  # user_id -> draft_slot
+        
+        # Get roster-to-user mapping
+        rosters_data = await client.get_league_rosters(league_id)
+        if not rosters_data:
+            return {}
+        
+        # Build mapping: roster_id -> draft_slot
+        roster_to_draft_slot = {}
+        for roster in rosters_data:
+            roster_id = roster.get("roster_id")
+            user_id = roster.get("owner_id")
+            
+            if roster_id is not None and user_id in draft_order:
+                draft_slot = draft_order[user_id]
+                roster_to_draft_slot[roster_id] = draft_slot
+        
+        return roster_to_draft_slot
+    
+    except Exception:
+        # If anything fails, return empty dict - will fall back to old logic
+        return {}
+
+
 async def _add_draft_outcomes_to_pick_nodes(league_id: str, nodes: Dict[str, AssetNode], league_history: List[League]):
     """
-    Add draft outcome information to pick nodes by matching them to actual draft results.
-    This creates the pick-to-player genealogy connections.
+    Add draft outcome information to pick nodes using draft configuration.
+    Maps pick identities to their actual draft slots deterministically.
     """
-    # Get all draft outcomes for all seasons
+    # Process each season
     for season_league in league_history:
         try:
-            draft_picks = await get_league_draft_picks(league_id, season_league.season)
+            season = season_league.season
             
-            for draft_pick in draft_picks:
-                # Find traded pick nodes that match this draft outcome
-                season = season_league.season
-                round_num = draft_pick.round
-                roster_id = draft_pick.roster_id
+            # Get draft picks and draft configuration for this season
+            draft_picks = await get_league_draft_picks(league_id, season_league.season)
+            if not draft_picks:
+                continue
                 
-                # Look for pick nodes that match this season/round and current owner
-                for asset_id, node in nodes.items():
-                    if (node.asset_type in ["draft_pick", "traded_pick"] and 
-                        node.current_owner == roster_id and
-                        node.metadata and
-                        node.metadata.get("season") == season and
-                        node.metadata.get("round") == round_num):
-                        
-                        # Add draft outcome to pick metadata
-                        if not node.metadata:
-                            node.metadata = {}
-                        
-                        player_name = None
-                        if draft_pick.player_id and draft_pick.metadata:
-                            first_name = draft_pick.metadata.get("first_name", "")
-                            last_name = draft_pick.metadata.get("last_name", "")
-                            player_name = f"{first_name} {last_name}".strip()
-                        
-                        node.metadata["draft_outcome"] = {
-                            "pick_no": draft_pick.pick_no,
-                            "player_id": draft_pick.player_id,
-                            "player_name": player_name,
-                            "position": draft_pick.metadata.get("position") if draft_pick.metadata else None,
-                            "team": draft_pick.metadata.get("team") if draft_pick.metadata else None
-                        }
-                        
-                        # Update asset name to include draft outcome
-                        if player_name:
-                            node.asset_name = f"{node.asset_name} → {player_name}"
+            # Get the draft ID from the first pick
+            draft_id = draft_picks[0].draft_id
+            
+            # Get roster-to-draft-slot mapping using draft configuration
+            roster_to_draft_slot = await _get_roster_to_draft_slot_mapping(draft_id, season_league.league_id)
+            
+            # Group draft picks by draft_slot and round
+            picks_by_slot_round = {}
+            for pick in draft_picks:
+                key = (pick.draft_slot, pick.round)
+                if key not in picks_by_slot_round:
+                    picks_by_slot_round[key] = []
+                picks_by_slot_round[key].append(pick)
+            
+            # Find all pick nodes for this season
+            season_pick_nodes = []
+            for asset_id, node in nodes.items():
+                if (node.asset_type in ["draft_pick", "traded_pick"] and 
+                    node.metadata and
+                    node.metadata.get("season") == season):
+                    season_pick_nodes.append((asset_id, node))
+            
+            # Process each pick node
+            for asset_id, node in season_pick_nodes:
+                if node.metadata.get("draft_outcome"):
+                    continue  # Already processed
+                
+                # Extract pick identity information
+                round_num = node.metadata.get("round")
+                original_owner_roster_id = node.original_owner
+                
+                if round_num is None or original_owner_roster_id is None:
+                    continue
+                
+                # Find which draft_slot the original owner had
+                original_draft_slot = roster_to_draft_slot.get(original_owner_roster_id)
+                if original_draft_slot is None:
+                    continue  # Can't determine original draft slot
+                
+                # Find the draft pick made from that draft_slot in that round
+                slot_round_key = (original_draft_slot, round_num)
+                slot_picks = picks_by_slot_round.get(slot_round_key, [])
+                
+                if not slot_picks:
+                    continue  # No pick found for this slot/round
+                
+                # Should be exactly one pick per slot/round
+                matching_pick = slot_picks[0]
+                
+                # Extract player information
+                player_name = None
+                if matching_pick.player_id and matching_pick.metadata:
+                    first_name = matching_pick.metadata.get("first_name", "")
+                    last_name = matching_pick.metadata.get("last_name", "")
+                    player_name = f"{first_name} {last_name}".strip()
+                
+                # Add draft outcome to node metadata
+                node.metadata["draft_outcome"] = {
+                    "pick_no": matching_pick.pick_no,
+                    "player_id": matching_pick.player_id,
+                    "player_name": player_name,
+                    "position": matching_pick.metadata.get("position") if matching_pick.metadata else None,
+                    "team": matching_pick.metadata.get("team") if matching_pick.metadata else None,
+                    "draft_slot": matching_pick.draft_slot
+                }
+                
+                # Update asset name to show the player drafted
+                if player_name:
+                    node.asset_name = f"{node.asset_name} → {player_name}"
         
         except Exception:
-            continue  # Skip seasons with no draft data
+            continue  # Skip seasons with errors
 
 
 async def trace_asset_genealogy_from_graph(league_id: str, root_asset_id: str) -> GraphBasedAssetGenealogy:
