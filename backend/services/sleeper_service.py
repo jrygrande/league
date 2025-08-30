@@ -436,6 +436,26 @@ async def get_player_stints_with_performance(league_id: str, player_id: str) -> 
         if i < len(all_seasons_stats_results) and isinstance(all_seasons_stats_results[i], dict):
             all_stats_by_season[season] = all_seasons_stats_results[i]
 
+    # 2b. Pre-fetch matchup data for all seasons to determine starter/bench status
+    matchup_tasks = [get_all_league_matchups(season_league.league_id) for season_league in league_history]
+    all_seasons_matchups_results = await asyncio.gather(*matchup_tasks, return_exceptions=True)
+    
+    # Create matchup lookup: {season: {week: {roster_id: Matchup}}}
+    all_matchups_by_season = {}
+    for i, season_league in enumerate(league_history):
+        season = season_league.season
+        if i < len(all_seasons_matchups_results) and isinstance(all_seasons_matchups_results[i], list):
+            season_matchups = all_seasons_matchups_results[i]
+            all_matchups_by_season[season] = {}
+            
+            for matchup in season_matchups:
+                week = matchup.week
+                roster_id = matchup.roster_id
+                
+                if week not in all_matchups_by_season[season]:
+                    all_matchups_by_season[season][week] = {}
+                all_matchups_by_season[season][week][roster_id] = matchup
+
     # 3. Process events to determine stints
     stints = []
     current_stint_start_date = None
@@ -522,7 +542,7 @@ async def get_player_stints_with_performance(league_id: str, player_id: str) -> 
                         team_name=roster_info["team_name"],
                         owner_username=roster_info["owner_username"],
                         owner_display_name=roster_info["owner_display_name"],
-                        aggregated_stats={}
+                        aggregated_stats={"roster_id": current_roster_id}  # Store roster_id for matchup lookup
                     ))
                 # Start new stint
                 current_stint_start_date = datetime.fromtimestamp(event_timestamp / 1000) if event_timestamp else datetime.min
@@ -537,21 +557,25 @@ async def get_player_stints_with_performance(league_id: str, player_id: str) -> 
             team_name=roster_info["team_name"],
             owner_username=roster_info["owner_username"],
             owner_display_name=roster_info["owner_display_name"],
-            aggregated_stats={}
+            aggregated_stats={"roster_id": current_roster_id}  # Store roster_id for matchup lookup
         ))
 
-    # 5. Efficiently aggregate performance data for each stint using pre-fetched data
+    # 5. Enhanced performance aggregation with starter/bench breakdown
     for stint in stints:
-        # Determine the season(s) covered by the stint
+        roster_id = stint.aggregated_stats["roster_id"]  # Get stored roster_id
         start_year = stint.start_date.year
         end_year = stint.end_date.year if stint.end_date else datetime.now().year
 
-        stint_total_points = 0.0
-        stint_games_played = 0
+        # Initialize detailed stats tracking
+        starting_stats = {"total_points": 0.0, "games": 0}
+        bench_stats = {"total_points": 0.0, "games": 0}
+        overall_stats = {"total_points": 0.0, "games_rostered": 0, "games_active": 0, "games_started": 0}
 
         for year in range(start_year, end_year + 1):
             season_str = str(year)
             season_stats = all_stats_by_season.get(season_str)
+            season_matchups = all_matchups_by_season.get(season_str)
+            
             if not season_stats:
                 continue
                 
@@ -559,19 +583,60 @@ async def get_player_stints_with_performance(league_id: str, player_id: str) -> 
             if not player_season_stats:
                 continue
 
-            # Efficiently filter stats by date range instead of checking every week
+            # Process each week's performance with starter/bench classification
             for week, stats in player_season_stats.items():
                 week_start_date = get_week_start_date(year, week)
+                
                 # Only process weeks within this stint's timeframe
-                if stint.start_date <= week_start_date and (stint.end_date is None or week_start_date < stint.end_date):
-                    stint_total_points += stats.pts_ppr if stats.pts_ppr is not None else 0
-                    if stats.gp is not None and stats.gp > 0:
-                        stint_games_played += 1
+                if not (stint.start_date <= week_start_date and (stint.end_date is None or week_start_date < stint.end_date)):
+                    continue
+                
+                points = stats.pts_ppr if stats.pts_ppr is not None else 0
+                is_active = stats.gp is not None and stats.gp > 0
+                
+                # Determine starter/bench status from matchup data
+                is_starting = False
+                is_rostered = False
+                
+                if season_matchups and week in season_matchups and roster_id in season_matchups[week]:
+                    matchup = season_matchups[week][roster_id]
+                    is_rostered = player_id in (matchup.players or [])
+                    is_starting = player_id in (matchup.starters or [])
+                
+                # Aggregate stats based on classification
+                overall_stats["total_points"] += points
+                if is_rostered:
+                    overall_stats["games_rostered"] += 1
+                if is_active:
+                    overall_stats["games_active"] += 1
+                
+                if is_starting:
+                    starting_stats["total_points"] += points
+                    starting_stats["games"] += 1
+                    overall_stats["games_started"] += 1
+                elif is_rostered:  # On roster but not starting
+                    bench_stats["total_points"] += points
+                    bench_stats["games"] += 1
         
+        # Calculate averages and build enhanced stats structure
         stint.aggregated_stats = {
-            "total_points": round(stint_total_points, 2),
-            "games_played": stint_games_played,
-            "avg_ppg": round(stint_total_points / stint_games_played, 2) if stint_games_played > 0 else 0.0,
+            "starting": {
+                "total_points": round(starting_stats["total_points"], 2),
+                "games_played": starting_stats["games"],
+                "avg_ppg": round(starting_stats["total_points"] / starting_stats["games"], 2) if starting_stats["games"] > 0 else 0.0
+            },
+            "bench": {
+                "total_points": round(bench_stats["total_points"], 2),
+                "games_played": bench_stats["games"],
+                "avg_ppg": round(bench_stats["total_points"] / bench_stats["games"], 2) if bench_stats["games"] > 0 else 0.0
+            },
+            "overall": {
+                "total_points": round(overall_stats["total_points"], 2),
+                "games_rostered": overall_stats["games_rostered"],
+                "games_active": overall_stats["games_active"],
+                "games_started": overall_stats["games_started"],
+                "avg_ppg": round(overall_stats["total_points"] / overall_stats["games_active"], 2) if overall_stats["games_active"] > 0 else 0.0
+            }
         }
 
     return stints
