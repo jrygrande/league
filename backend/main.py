@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 
 from . import database
 from .services import sleeper_service
-from .models.sleeper import User, League, Roster, Draft, Player, Stats, Transaction, Matchup, PlayerStint, DraftPickInfo, DraftPickOwnership, TradeAsset, TradeNode, TradeTree
+from .models.sleeper import User, League, Roster, Draft, Player, Stats, Transaction, Matchup, PlayerStint, DraftPickInfo, DraftPickOwnership, TradeAsset, TradeNode, TradeTree, PickChain, PickIdentity, TradeGroup, CompleteAssetTree, TradeGraph, GraphBasedAssetGenealogy
 
 
 @asynccontextmanager
@@ -54,7 +54,18 @@ async def get_league_rosters(league_id: str):
 @app.get("/league/{league_id}/transactions/{week}", response_model=List[Transaction])
 async def get_league_transactions(league_id: str, week: int):
     transactions_data = await sleeper_service.client.get_league_transactions(league_id, week)
-    return [Transaction(**tx) for tx in transactions_data]
+    if transactions_data:
+        for tx in transactions_data:
+            tx["league_id"] = league_id
+            # Convert draft_picks to DraftPickMovement objects
+            if "draft_picks" in tx and tx["draft_picks"]:
+                from .models.sleeper import DraftPickMovement
+                draft_pick_movements = []
+                for pick_data in tx["draft_picks"]:
+                    if isinstance(pick_data, dict):
+                        draft_pick_movements.append(DraftPickMovement(**pick_data))
+                tx["draft_picks"] = draft_pick_movements
+    return [Transaction(**tx) for tx in transactions_data] if transactions_data else []
 
 
 @app.get("/players", response_model=Dict[str, Player])
@@ -172,3 +183,61 @@ async def analyze_trade_chain_impact(league_id: str, transaction_id: str):
 async def get_historical_data_coverage(league_id: str):
     """Validate historical data coverage for a league."""
     return await sleeper_service.get_historical_data_coverage(league_id)
+
+
+@app.get("/analysis/pick_chain/{league_id}/{season}/{round}/{original_owner}", response_model=PickChain)
+async def trace_pick_ownership_chain(league_id: str, season: str, round: int, original_owner: int):
+    """Trace the complete ownership chain of a specific pick through all trades."""
+    return await sleeper_service.trace_pick_ownership_chain(league_id, season, round, original_owner)
+
+
+@app.get("/analysis/league/{league_id}/pick_identities", response_model=List[PickIdentity])
+async def get_league_pick_identities(league_id: str):
+    """Get unique identities for all draft picks in league history to track them through trades."""
+    return await sleeper_service.create_pick_identities(league_id)
+
+
+@app.get("/analysis/league/{league_id}/trade_groups", response_model=List[TradeGroup])
+async def get_league_trade_groups(league_id: str, time_window_days: int = 7):
+    """Group related trades together based on timing, participants, and asset relationships."""
+    return await sleeper_service.find_trade_groups(league_id, time_window_days)
+
+
+@app.get("/analysis/league/{league_id}/asset_tree/{root_asset_id}", response_model=CompleteAssetTree)
+async def get_complete_asset_tree(league_id: str, root_asset_id: str):
+    """Build complete asset genealogy tree starting from a root asset (like Travis Kelce)."""
+    return await sleeper_service.build_complete_asset_tree(league_id, root_asset_id)
+
+
+@app.get("/analysis/league/{league_id}/complete_trade_graph", response_model=TradeGraph)
+async def get_complete_trade_graph(league_id: str):
+    """Build comprehensive trade graph from all historical transactions."""
+    return await sleeper_service.build_complete_trade_graph(league_id)
+
+
+@app.get("/analysis/league/{league_id}/asset_genealogy/{root_asset_id}", response_model=GraphBasedAssetGenealogy)
+async def get_graph_based_asset_genealogy(league_id: str, root_asset_id: str):
+    """Get true multi-hop asset genealogy using complete trade graph analysis."""
+    return await sleeper_service.trace_asset_genealogy_from_graph(league_id, root_asset_id)
+
+
+@app.get("/analysis/league/{league_id}/manager/{roster_id}/asset_trace/{asset_id}")
+async def trace_asset_for_manager(league_id: str, roster_id: int, asset_id: str):
+    """Trace how a manager acquired an asset and what it became through all subsequent trades.
+    
+    Returns:
+    - How the asset was acquired (draft, trade chain, etc.)
+    - All subsequent trades and transformations
+    - Current status/outcome of the asset
+    """
+    return await sleeper_service.trace_manager_asset_lifecycle(league_id, roster_id, asset_id)
+
+
+@app.get("/analysis/league/{league_id}/manager/{roster_id}/comprehensive_chain/{asset_id}")
+async def get_comprehensive_asset_chain(league_id: str, roster_id: int, asset_id: str):
+    """Get complete multi-generation asset chain showing how an asset was acquired,
+    what was received when trading it away, and what all those assets became.
+    
+    Perfect for tracing complex trades like Kelce → multiple picks → final players.
+    """
+    return await sleeper_service.trace_comprehensive_asset_chain(league_id, roster_id, asset_id)
