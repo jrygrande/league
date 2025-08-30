@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 
 from . import database
 from .services import sleeper_service
-from .models.sleeper import User, League, Roster, Draft, Player, Stats, Transaction, Matchup
+from .models.sleeper import User, League, Roster, Draft, Player, Stats, Transaction, Matchup, PlayerStint
 
 
 @asynccontextmanager
@@ -108,3 +108,8 @@ async def get_player_performance_since_transaction(league_id: str, player_id: st
 @app.get("/analysis/league/{league_id}/player/{player_id}/between_transactions/{transaction_id_x}/{transaction_id_y}", response_model=Dict[str, Any])
 async def get_player_performance_between_transactions(league_id: str, player_id: str, transaction_id_x: str, transaction_id_y: str):
     return await sleeper_service.get_player_performance_between_transactions(league_id, player_id, transaction_id_x, transaction_id_y)
+
+
+@app.get("/analysis/league/{league_id}/player/{player_id}/stints", response_model=List[PlayerStint])
+async def get_player_stints(league_id: str, player_id: str):
+    return await sleeper_service.get_player_stints_with_performance(league_id, player_id)

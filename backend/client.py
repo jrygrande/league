@@ -54,6 +54,11 @@ async def get_user_by_username(username: str):
     return await get(url)
 
 
+async def get_user_by_user_id(user_id: str):
+    url = f"{API_URL}/user/{user_id}"
+    return await get(url)
+
+
 async def get_leagues_for_user(user_id: str, season: str):
     url = f"{API_URL}/user/{user_id}/leagues/nfl/{season}"
     return await get(url)

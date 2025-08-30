@@ -1,4 +1,5 @@
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 from pydantic import BaseModel
 
 
@@ -29,7 +30,7 @@ class Roster(BaseModel):
     starters: Optional[List[str]] = None
     reserve: Optional[List[str]] = None
     settings: Dict[str, Any]
-    metadata: Dict[str, Any]
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class Draft(BaseModel):
@@ -92,3 +93,12 @@ class Matchup(BaseModel):
     players: List[str]
     starters: List[str]
     # Add other relevant matchup fields
+
+
+class PlayerStint(BaseModel):
+    start_date: datetime
+    end_date: Optional[datetime] = None
+    team_name: str
+    owner_username: str
+    owner_display_name: str
+    aggregated_stats: Dict[str, Any]

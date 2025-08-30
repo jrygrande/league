@@ -13,6 +13,7 @@ from ..models.sleeper import (
     Stats,
     Transaction,
     Matchup,
+    PlayerStint,
 )
 
 # These constants will eventually move to config.py
@@ -412,3 +413,165 @@ async def get_player_performance_between_transactions(league_id: str, player_id:
         "transaction_date_y": transaction_date_y.isoformat() if transaction_date_y != datetime.min else None,
         "summary": summary,
     }
+
+
+async def get_player_stints_with_performance(league_id: str, player_id: str) -> List[PlayerStint]:
+    # 1. Get player lifecycle events
+    lifecycle_events = await get_player_lifecycle(league_id, player_id)
+    
+    # 2. Pre-fetch all season stats data to avoid redundant API calls
+    league_history_data = await client.get_league_history(league_id)
+    league_history = [League(**item) for item in league_history_data] if league_history_data else []
+    
+    # Get unique seasons from league history
+    seasons = list(set(league.season for league in league_history if league.season))
+    
+    # Batch fetch all season stats in parallel
+    stats_tasks = [get_all_player_weekly_stats_for_season(season) for season in seasons]
+    all_seasons_stats_results = await asyncio.gather(*stats_tasks, return_exceptions=True)
+    
+    # Create comprehensive stats lookup: {season: {player_id: {week: Stats}}}
+    all_stats_by_season = {}
+    for i, season in enumerate(seasons):
+        if i < len(all_seasons_stats_results) and isinstance(all_seasons_stats_results[i], dict):
+            all_stats_by_season[season] = all_seasons_stats_results[i]
+
+    # 3. Process events to determine stints
+    stints = []
+    current_stint_start_date = None
+    current_roster_id = None
+
+    # 4. Pre-fetch all roster and user data to avoid redundant API calls
+    # Get all unique roster IDs from lifecycle events
+    unique_roster_ids = set()
+    for event in lifecycle_events:
+        roster_id = event["details"].get("roster_id")
+        if roster_id:
+            unique_roster_ids.add(roster_id)
+    
+    # Batch fetch roster data from all seasons
+    roster_tasks = [client.get_league_rosters(season_league.league_id) for season_league in league_history]
+    all_seasons_rosters = await asyncio.gather(*roster_tasks, return_exceptions=True)
+    
+    # Create roster lookup: {roster_id: Roster}
+    roster_lookup = {}
+    unique_owner_ids = set()
+    
+    for season_rosters_data in all_seasons_rosters:
+        if isinstance(season_rosters_data, list):
+            for roster_data in season_rosters_data:
+                try:
+                    roster = Roster(**roster_data)
+                    roster_lookup[roster.roster_id] = roster
+                    if roster.owner_id:
+                        unique_owner_ids.add(roster.owner_id)
+                except Exception:
+                    continue  # Skip invalid roster data
+    
+    # Batch fetch user data for all unique owners
+    user_tasks = [client.get_user_by_user_id(owner_id) for owner_id in unique_owner_ids]
+    all_users_data = await asyncio.gather(*user_tasks, return_exceptions=True)
+    
+    # Create user lookup: {owner_id: user_data}
+    user_lookup = {}
+    for i, owner_id in enumerate(unique_owner_ids):
+        if i < len(all_users_data) and isinstance(all_users_data[i], dict):
+            user_lookup[owner_id] = all_users_data[i]
+    
+    # Helper to get roster details and owner info (now using cached data)
+    def _get_roster_info(roster_id: int):
+        roster = roster_lookup.get(roster_id)
+        if roster and roster.owner_id:
+            user_data = user_lookup.get(roster.owner_id)
+            if user_data:
+                team_name = (roster.metadata or {}).get("team_name", user_data.get("display_name", user_data.get("username", "Unknown Team")))
+                return {
+                    "team_name": team_name,
+                    "owner_username": user_data.get("username"),
+                    "owner_display_name": user_data.get("display_name"),
+                }
+        return {"team_name": "Unknown Team", "owner_username": "Unknown", "owner_display_name": "Unknown"}
+
+    # Iterate through sorted lifecycle events
+    for i, event in enumerate(lifecycle_events):
+        event_type = event["type"]
+        event_timestamp = event["timestamp"]
+        
+        # Extract roster_id based on event type
+        if "draft" in event_type:
+            event_roster_id = event["details"].get("roster_id")
+        elif event_type in ["trade", "waiver", "free_agent"]:
+            # For trades, the new roster is in adds[player_id]
+            adds = event["details"].get("adds", {})
+            event_roster_id = adds.get(player_id) if adds else None
+        else:
+            event_roster_id = event["details"].get("roster_id")
+
+        if "draft" in event_type or event_type == "trade" or event_type == "waiver" or event_type == "free_agent":
+            # A new stint begins or an existing one changes
+            if current_roster_id is None: # First event for this player
+                current_stint_start_date = datetime.fromtimestamp(event_timestamp / 1000) if event_timestamp else datetime.min
+                current_roster_id = event_roster_id
+            elif event_roster_id != current_roster_id: # Player moved teams
+                # End previous stint
+                if current_stint_start_date and current_roster_id:
+                    roster_info = _get_roster_info(current_roster_id)
+                    stints.append(PlayerStint(
+                        start_date=current_stint_start_date,
+                        end_date=datetime.fromtimestamp(event_timestamp / 1000) if event_timestamp else None,
+                        team_name=roster_info["team_name"],
+                        owner_username=roster_info["owner_username"],
+                        owner_display_name=roster_info["owner_display_name"],
+                        aggregated_stats={}
+                    ))
+                # Start new stint
+                current_stint_start_date = datetime.fromtimestamp(event_timestamp / 1000) if event_timestamp else datetime.min
+                current_roster_id = event_roster_id
+
+    # Handle the last stint (player still on team)
+    if current_stint_start_date and current_roster_id:
+        roster_info = _get_roster_info(current_roster_id)
+        stints.append(PlayerStint(
+            start_date=current_stint_start_date,
+            end_date=None, # Still on team
+            team_name=roster_info["team_name"],
+            owner_username=roster_info["owner_username"],
+            owner_display_name=roster_info["owner_display_name"],
+            aggregated_stats={}
+        ))
+
+    # 5. Efficiently aggregate performance data for each stint using pre-fetched data
+    for stint in stints:
+        # Determine the season(s) covered by the stint
+        start_year = stint.start_date.year
+        end_year = stint.end_date.year if stint.end_date else datetime.now().year
+
+        stint_total_points = 0.0
+        stint_games_played = 0
+
+        for year in range(start_year, end_year + 1):
+            season_str = str(year)
+            season_stats = all_stats_by_season.get(season_str)
+            if not season_stats:
+                continue
+                
+            player_season_stats = season_stats.get(player_id)
+            if not player_season_stats:
+                continue
+
+            # Efficiently filter stats by date range instead of checking every week
+            for week, stats in player_season_stats.items():
+                week_start_date = get_week_start_date(year, week)
+                # Only process weeks within this stint's timeframe
+                if stint.start_date <= week_start_date and (stint.end_date is None or week_start_date < stint.end_date):
+                    stint_total_points += stats.pts_ppr if stats.pts_ppr is not None else 0
+                    if stats.gp is not None and stats.gp > 0:
+                        stint_games_played += 1
+        
+        stint.aggregated_stats = {
+            "total_points": round(stint_total_points, 2),
+            "games_played": stint_games_played,
+            "avg_ppg": round(stint_total_points / stint_games_played, 2) if stint_games_played > 0 else 0.0,
+        }
+
+    return stints
