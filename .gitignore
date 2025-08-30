@@ -1,5 +1,2 @@
-# Caches
-players.json
-
-# Environment
-.venv/
+# Database file
+sleeper_cache.db
