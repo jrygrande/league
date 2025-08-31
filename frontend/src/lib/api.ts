@@ -1,0 +1,96 @@
+import axios, { AxiosInstance } from 'axios'
+import { User, League, Player, ComprehensiveAssetChain } from './types'
+
+class ApiClient {
+  private client: AxiosInstance
+
+  constructor() {
+    this.client = axios.create({
+      baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
+      timeout: 10000,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+
+    // Request interceptor
+    this.client.interceptors.request.use(
+      (config) => {
+        console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`)
+        return config
+      },
+      (error) => {
+        return Promise.reject(error)
+      }
+    )
+
+    // Response interceptor
+    this.client.interceptors.response.use(
+      (response) => {
+        return response
+      },
+      (error) => {
+        console.error('API Error:', error.response?.data || error.message)
+        
+        if (error.response?.status === 404) {
+          // Handle not found errors gracefully
+          return Promise.resolve({ data: null })
+        }
+        
+        return Promise.reject(error)
+      }
+    )
+  }
+
+  // User endpoints
+  async getUserByUsername(username: string): Promise<User | null> {
+    const response = await this.client.get(`/user/${username}`)
+    return response.data
+  }
+
+  async getUserLeagues(username: string, season: string): Promise<League[]> {
+    const response = await this.client.get(`/user/${username}/leagues/${season}`)
+    return response.data || []
+  }
+
+  // Player endpoints
+  async getAllPlayers(): Promise<Record<string, Player>> {
+    const response = await this.client.get('/players')
+    return response.data || {}
+  }
+
+  async searchPlayers(query: string): Promise<Player[]> {
+    // For now, we'll get all players and filter client-side
+    // In the future, we could add a server-side search endpoint
+    const allPlayers = await this.getAllPlayers()
+    const players = Object.values(allPlayers)
+    
+    if (!query || query.length < 2) {
+      return []
+    }
+    
+    const searchTerm = query.toLowerCase()
+    return players
+      .filter(player => 
+        player.full_name?.toLowerCase().includes(searchTerm) ||
+        player.first_name?.toLowerCase().includes(searchTerm) ||
+        player.last_name?.toLowerCase().includes(searchTerm)
+      )
+      .slice(0, 10) // Limit to 10 results
+  }
+
+  // Asset chain endpoints
+  async getComprehensiveAssetChain(
+    leagueId: string, 
+    rosterId: number, 
+    assetId: string
+  ): Promise<ComprehensiveAssetChain | null> {
+    const response = await this.client.get(
+      `/analysis/league/${leagueId}/manager/${rosterId}/comprehensive_chain/${assetId}`
+    )
+    return response.data
+  }
+}
+
+export const apiClient = new ApiClient()
+export default apiClient
