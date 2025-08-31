@@ -5,7 +5,7 @@ import { UsernameForm, LeagueSelector } from "@/components/forms"
 import { PlayerSearch } from "@/components/search"
 import { AssetChainVisualization } from "@/components/visualization/AssetChainVisualization"
 import { ChainSummary } from "@/components/visualization/ChainSummary"
-import { User, League, Player, Roster } from "@/lib/types"
+import { User, League, Player, Roster, LeagueChain, LeagueHistory } from "@/lib/types"
 import { useLeagueRosters } from "@/hooks/useLeagueRosters"
 import { useAssetChain } from "@/hooks/useAssetChain"
 import { Button } from "@/components/ui/button"
@@ -14,35 +14,33 @@ import { ArrowLeft } from "lucide-react"
 export default function Home() {
   const [currentStep, setCurrentStep] = useState<'username' | 'league' | 'player' | 'results'>('username')
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
-  const [selectedLeague, setSelectedLeague] = useState<League | null>(null)
+  const [selectedLeagueChain, setSelectedLeagueChain] = useState<LeagueChain | null>(null)
+  const [selectedLeagueHistory, setSelectedLeagueHistory] = useState<LeagueHistory | null>(null)
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
   const [userRoster, setUserRoster] = useState<Roster | null>(null)
 
-  // Fetch rosters when league is selected
-  const { data: rosters } = useLeagueRosters(selectedLeague?.league_id || '')
+  // Fetch rosters from the most recent league in the chain
+  const { data: rosters } = useLeagueRosters(selectedLeagueChain?.base_league_id || '')
 
   // Update userRoster when rosters data changes
   useEffect(() => {
-    if (rosters && selectedUser && selectedLeague) {
+    if (rosters && selectedUser && selectedLeagueChain) {
       const userRosterInLeague = rosters.find(roster => roster.owner_id === selectedUser.user_id)
       setUserRoster(userRosterInLeague || null)
     }
-  }, [rosters, selectedUser, selectedLeague])
+  }, [rosters, selectedUser, selectedLeagueChain])
 
   const handleUserFound = (user: User) => {
     setSelectedUser(user)
     setCurrentStep('league')
   }
 
-  const handleLeagueSelected = (league: League) => {
-    setSelectedLeague(league)
+  const handleLeagueSelected = (leagueChain: LeagueChain, leagueHistory: LeagueHistory) => {
+    setSelectedLeagueChain(leagueChain)
+    setSelectedLeagueHistory(leagueHistory)
     setCurrentStep('player')
     
-    // Find user's roster in this league (will be set when rosters are loaded)
-    if (rosters && selectedUser) {
-      const userRosterInLeague = rosters.find(roster => roster.owner_id === selectedUser.user_id)
-      setUserRoster(userRosterInLeague || null)
-    }
+    // Find user's roster in this league (will be set when rosters are loaded via useEffect)
   }
 
   const handlePlayerSelected = (player: Player) => {
@@ -58,7 +56,8 @@ export default function Home() {
         break
       case 'player':
         setCurrentStep('league')
-        setSelectedLeague(null)
+        setSelectedLeagueChain(null)
+        setSelectedLeagueHistory(null)
         break
       case 'results':
         setCurrentStep('player')
@@ -70,7 +69,8 @@ export default function Home() {
   const reset = () => {
     setCurrentStep('username')
     setSelectedUser(null)
-    setSelectedLeague(null)
+    setSelectedLeagueChain(null)
+    setSelectedLeagueHistory(null)
     setSelectedPlayer(null)
     setUserRoster(null)
   }
@@ -94,7 +94,7 @@ export default function Home() {
             <div className="flex items-center space-x-4">
               {[
                 { key: 'username', label: 'User', active: currentStep === 'username' || !!selectedUser },
-                { key: 'league', label: 'League', active: currentStep === 'league' || !!selectedLeague },
+                { key: 'league', label: 'League', active: currentStep === 'league' || !!selectedLeagueChain },
                 { key: 'player', label: 'Player', active: currentStep === 'player' || !!selectedPlayer },
                 { key: 'results', label: 'Analysis', active: currentStep === 'results' },
               ].map((step, index) => (
@@ -147,14 +147,15 @@ export default function Home() {
               <LeagueSelector
                 user={selectedUser}
                 onLeagueSelected={handleLeagueSelected}
+                selectedLeagueChain={selectedLeagueChain}
               />
             )}
 
-            {currentStep === 'player' && selectedUser && selectedLeague && (
+            {currentStep === 'player' && selectedUser && selectedLeagueChain && (
               <PlayerSearch onPlayerSelected={handlePlayerSelected} />
             )}
 
-            {currentStep === 'results' && selectedUser && selectedLeague && selectedPlayer && userRoster && (
+            {currentStep === 'results' && selectedUser && selectedLeagueChain && selectedLeagueHistory && selectedPlayer && userRoster && (
               <div className="w-full max-w-6xl space-y-6">
                 {/* Header with basic info */}
                 <div className="bg-white rounded-lg border shadow-sm p-6">
@@ -173,7 +174,9 @@ export default function Home() {
                     </div>
                     <div>
                       <span className="font-medium text-gray-600">League:</span>{' '}
-                      {selectedLeague.name} ({selectedLeague.season})
+                      {selectedLeagueChain.name} ({selectedLeagueChain.total_seasons > 1 
+                        ? `${selectedLeagueChain.seasons.length} seasons` 
+                        : selectedLeagueChain.most_recent_season})
                     </div>
                     <div>
                       <span className="font-medium text-gray-600">Player:</span>{' '}
@@ -184,7 +187,7 @@ export default function Home() {
 
                 {/* Asset Chain Visualization */}
                 <AssetChainVisualization
-                  leagueId={selectedLeague.league_id}
+                  leagueId={selectedLeagueChain.base_league_id}
                   rosterId={userRoster.roster_id}
                   assetId={selectedPlayer.player_id}
                   assetName={selectedPlayer.full_name || `${selectedPlayer.first_name} ${selectedPlayer.last_name}`}
@@ -192,7 +195,7 @@ export default function Home() {
 
                 {/* Chain Summary - only show if we have asset chain data */}
                 <AssetChainSummaryWrapper
-                  leagueId={selectedLeague.league_id}
+                  leagueId={selectedLeagueChain.base_league_id}
                   rosterId={userRoster.roster_id}
                   assetId={selectedPlayer.player_id}
                 />

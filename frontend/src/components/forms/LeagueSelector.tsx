@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import {
   Select,
   SelectContent,
@@ -12,32 +12,49 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
-import { useUserLeagues } from "@/hooks/useUserLeagues"
-import { League, User } from "@/lib/types"
+import { useAllUserLeagues } from "@/hooks/useAllUserLeagues"
+import { useLeagueHistory } from "@/hooks/useLeagueHistory"
+import { LeagueChain, LeagueHistory, User } from "@/lib/types"
 
 interface LeagueSelectorProps {
   user: User
-  onLeagueSelected: (league: League) => void
-  selectedLeague?: League
+  onLeagueSelected: (leagueChain: LeagueChain, leagueHistory: LeagueHistory) => void
+  selectedLeagueChain?: LeagueChain | null
 }
 
-export function LeagueSelector({ user, onLeagueSelected, selectedLeague }: LeagueSelectorProps) {
-  const [selectedSeason, setSelectedSeason] = useState("2024")
-  const currentYear = new Date().getFullYear()
-  const seasons = Array.from({ length: 5 }, (_, i) => (currentYear - i).toString())
+export function LeagueSelector({ user, onLeagueSelected, selectedLeagueChain }: LeagueSelectorProps) {
+  const [selectedLeagueId, setSelectedLeagueId] = useState<string>("")
 
   const {
-    data: leagues,
-    isLoading,
-    error,
-  } = useUserLeagues(user.username, selectedSeason)
+    data: allLeaguesResponse,
+    isLoading: isLoadingLeagues,
+    error: leaguesError,
+  } = useAllUserLeagues(user.username)
 
-  const handleLeagueSelect = (leagueId: string) => {
-    const league = leagues?.find(l => l.league_id === leagueId)
-    if (league) {
-      onLeagueSelected(league)
+  const {
+    data: leagueHistory,
+    isLoading: isLoadingHistory,
+    error: historyError,
+  } = useLeagueHistory(selectedLeagueId)
+
+  const handleLeagueSelect = (baseLeagueId: string) => {
+    const leagueChain = allLeaguesResponse?.league_chains.find(chain => chain.base_league_id === baseLeagueId)
+    if (leagueChain) {
+      setSelectedLeagueId(baseLeagueId)
+      // Once we have both the league chain and its history, call the callback
+      if (leagueHistory) {
+        onLeagueSelected(leagueChain, leagueHistory)
+      }
     }
   }
+
+  // Effect to call onLeagueSelected when both league chain and history are available
+  useEffect(() => {
+    const selectedChain = allLeaguesResponse?.league_chains.find(chain => chain.base_league_id === selectedLeagueId)
+    if (selectedChain && leagueHistory) {
+      onLeagueSelected(selectedChain, leagueHistory)
+    }
+  }, [selectedLeagueId, allLeaguesResponse, leagueHistory, onLeagueSelected])
 
   const getLeagueStatus = (status: string) => {
     switch (status) {
@@ -61,35 +78,19 @@ export function LeagueSelector({ user, onLeagueSelected, selectedLeague }: Leagu
     return "Custom"
   }
 
+  const isLoading = isLoadingLeagues || (selectedLeagueId && isLoadingHistory)
+  const error = leaguesError || historyError
+
   return (
     <div className="w-full max-w-2xl space-y-4">
       <Card>
         <CardHeader>
           <CardTitle>Select League</CardTitle>
           <CardDescription>
-            Choose a season and league for {user.display_name || user.username}
+            Choose a league for {user.display_name || user.username} - all seasons included
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Season Selector */}
-          <div className="space-y-2">
-            <label htmlFor="season" className="text-sm font-medium">
-              Season
-            </label>
-            <Select value={selectedSeason} onValueChange={setSelectedSeason}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select season" />
-              </SelectTrigger>
-              <SelectContent>
-                {seasons.map((season) => (
-                  <SelectItem key={season} value={season}>
-                    {season}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
           {/* League Selector */}
           <div className="space-y-2">
             <label htmlFor="league" className="text-sm font-medium">
@@ -111,30 +112,35 @@ export function LeagueSelector({ user, onLeagueSelected, selectedLeague }: Leagu
               </Alert>
             )}
 
-            {leagues && leagues.length === 0 && (
+            {allLeaguesResponse && allLeaguesResponse.league_chains.length === 0 && (
               <Alert>
                 <AlertDescription>
-                  No leagues found for {selectedSeason}. Try selecting a different season.
+                  No leagues found for {user.display_name || user.username}. You may need to join some leagues first.
                 </AlertDescription>
               </Alert>
             )}
 
-            {leagues && leagues.length > 0 && (
+            {allLeaguesResponse && allLeaguesResponse.league_chains.length > 0 && (
               <Select
-                value={selectedLeague?.league_id || ""}
+                value={selectedLeagueChain?.base_league_id || ""}
                 onValueChange={handleLeagueSelect}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select a league" />
                 </SelectTrigger>
                 <SelectContent>
-                  {leagues.map((league) => (
-                    <SelectItem key={league.league_id} value={league.league_id}>
+                  {allLeaguesResponse.league_chains.map((leagueChain) => (
+                    <SelectItem key={leagueChain.base_league_id} value={leagueChain.base_league_id}>
                       <div className="flex items-center gap-2">
-                        <span>{league.name}</span>
+                        <span>{leagueChain.name}</span>
                         <span className="text-sm text-muted-foreground">
-                          ({league.total_rosters} teams)
+                          ({leagueChain.total_rosters} teams)
                         </span>
+                        {leagueChain.total_seasons > 1 && (
+                          <Badge variant="outline" className="text-xs">
+                            {leagueChain.total_seasons} seasons
+                          </Badge>
+                        )}
                       </div>
                     </SelectItem>
                   ))}
@@ -144,29 +150,44 @@ export function LeagueSelector({ user, onLeagueSelected, selectedLeague }: Leagu
           </div>
 
           {/* Selected League Details */}
-          {selectedLeague && (
+          {selectedLeagueChain && (
             <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
               <div className="space-y-3">
                 <div className="flex items-start justify-between">
                   <div>
-                    <h4 className="font-medium text-blue-900">{selectedLeague.name}</h4>
+                    <h4 className="font-medium text-blue-900">{selectedLeagueChain.name}</h4>
                     <p className="text-sm text-blue-700">
-                      Season {selectedLeague.season} • {selectedLeague.total_rosters} teams
+                      {selectedLeagueChain.total_seasons > 1 ? (
+                        <>Seasons {Math.min(...selectedLeagueChain.seasons.map(s => parseInt(s)))}-{selectedLeagueChain.most_recent_season}</>
+                      ) : (
+                        <>Season {selectedLeagueChain.most_recent_season}</>
+                      )} • {selectedLeagueChain.total_rosters} teams
                     </p>
                   </div>
-                  {getLeagueStatus(selectedLeague.status)}
+                  {getLeagueStatus(selectedLeagueChain.status)}
                 </div>
                 
                 <div className="flex flex-wrap gap-2">
+                  {selectedLeagueChain.total_seasons > 1 && (
+                    <Badge variant="default" className="bg-blue-100 text-blue-800">
+                      {selectedLeagueChain.total_seasons} Season Dynasty
+                    </Badge>
+                  )}
                   <Badge variant="outline">
-                    {getScoringType(selectedLeague.scoring_settings)}
+                    {selectedLeagueChain.total_rosters} teams
                   </Badge>
-                  {selectedLeague.settings?.playoff_teams && (
-                    <Badge variant="outline">
-                      {selectedLeague.settings.playoff_teams} playoff teams
+                  {leagueHistory && (
+                    <Badge variant="outline" className="bg-green-100 text-green-800">
+                      Full History Loaded
                     </Badge>
                   )}
                 </div>
+                
+                {selectedLeagueChain.total_seasons > 1 && (
+                  <div className="text-xs text-blue-600">
+                    Seasons: {selectedLeagueChain.seasons.join(', ')}
+                  </div>
+                )}
               </div>
             </div>
           )}

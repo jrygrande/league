@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios'
-import { User, League, Player, Roster, ComprehensiveAssetChain } from './types'
+import { User, League, Player, Roster, ComprehensiveAssetChain, AllUserLeaguesResponse, LeagueHistory } from './types'
 
 class ApiClient {
   private client: AxiosInstance
@@ -32,10 +32,8 @@ class ApiClient {
       (error) => {
         console.error('API Error:', error.response?.data || error.message)
         
-        if (error.response?.status === 404) {
-          // Handle not found errors gracefully
-          return Promise.resolve({ data: null })
-        }
+        // Let 404s be handled by individual endpoints or hooks
+        // Don't automatically convert them to null responses
         
         return Promise.reject(error)
       }
@@ -44,8 +42,15 @@ class ApiClient {
 
   // User endpoints
   async getUserByUsername(username: string): Promise<User | null> {
-    const response = await this.client.get(`/user/${username}`)
-    return response.data
+    try {
+      const response = await this.client.get(`/user/${username}`)
+      return response.data
+    } catch (error: any) {
+      if (error.response?.status === 404) {
+        return null
+      }
+      throw error
+    }
   }
 
   async getUserLeagues(username: string, season: string): Promise<League[]> {
@@ -53,10 +58,20 @@ class ApiClient {
     return response.data || []
   }
 
+  async getAllUserLeagues(username: string): Promise<AllUserLeaguesResponse> {
+    const response = await this.client.get(`/user/${username}/all-leagues`)
+    return response.data
+  }
+
   // League endpoints
   async getLeagueRosters(leagueId: string): Promise<Roster[]> {
     const response = await this.client.get(`/league/${leagueId}/rosters`)
     return response.data || []
+  }
+
+  async getLeagueHistory(leagueId: string): Promise<LeagueHistory> {
+    const response = await this.client.get(`/league/${leagueId}/full-history`)
+    return response.data
   }
 
   // Player endpoints

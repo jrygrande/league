@@ -18,6 +18,27 @@ export interface League {
   roster_positions: string[]
 }
 
+export interface LeagueChain {
+  base_league_id: string  // Most recent league_id
+  name: string
+  seasons: string[]  // All seasons this league has existed
+  league_ids: string[]  // Corresponding league_ids for each season
+  most_recent_season: string
+  total_seasons: number
+  status: string
+  total_rosters: number
+}
+
+export interface LeagueHistory {
+  current_league_id: string
+  leagues: League[]  // Full history chain, newest first
+}
+
+export interface AllUserLeaguesResponse {
+  username: string
+  league_chains: LeagueChain[]
+}
+
 export interface Player {
   player_id: string
   full_name?: string
@@ -120,6 +141,8 @@ export interface ApiError {
 export const QUERY_KEYS = {
   user: (username: string) => ['user', username] as const,
   userLeagues: (username: string, season: string) => ['user', username, 'leagues', season] as const,
+  allUserLeagues: (username: string) => ['user', username, 'all-leagues'] as const,
+  leagueHistory: (leagueId: string) => ['league', leagueId, 'full-history'] as const,
   leagueRosters: (leagueId: string) => ['league', leagueId, 'rosters'] as const,
   players: () => ['players'] as const,
   playerSearch: (query: string) => ['players', 'search', query] as const,
