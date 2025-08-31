@@ -32,7 +32,16 @@ export function PlayerSearch({ onPlayerSelected, selectedPlayer }: PlayerSearchP
   const [open, setOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
 
-  const { data: players, isLoading, error } = usePlayerSearch(searchQuery)
+  const { data: players, isLoading, error, isPending } = usePlayerSearch(searchQuery)
+
+  // Debug logging
+  console.log('PlayerSearch render:', {
+    searchQuery,
+    playersLength: players?.length || 0,
+    isLoading,
+    isPending,
+    error: error?.message
+  })
 
   const handlePlayerSelect = (player: Player) => {
     onPlayerSelected(player)
@@ -106,14 +115,14 @@ export function PlayerSearch({ onPlayerSelected, selectedPlayer }: PlayerSearchP
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-full p-0" align="start">
-                <Command>
+                <Command shouldFilter={false}>
                   <CommandInput
                     placeholder="Type player name..."
                     value={searchQuery}
                     onValueChange={setSearchQuery}
                   />
                   <CommandList>
-                    {isLoading && searchQuery.length >= 2 && (
+                    {(isLoading || isPending) && searchQuery.length >= 2 && (
                       <div className="p-4 space-y-2">
                         <Skeleton className="h-4 w-full" />
                         <Skeleton className="h-4 w-3/4" />
@@ -121,62 +130,69 @@ export function PlayerSearch({ onPlayerSelected, selectedPlayer }: PlayerSearchP
                       </div>
                     )}
 
-                    {error && (
+                    {error && !isPending && (
                       <div className="p-4 text-sm text-red-600">
                         Failed to search players. Please try again.
                       </div>
                     )}
 
-                    {searchQuery.length < 2 && !isLoading && (
+                    {searchQuery.length < 2 && !isLoading && !isPending && (
                       <CommandEmpty>Type at least 2 characters to search...</CommandEmpty>
                     )}
 
-                    {searchQuery.length >= 2 && !isLoading && players?.length === 0 && (
+                    {searchQuery.length >= 2 && !isLoading && !isPending && players?.length === 0 && (
                       <CommandEmpty>No players found for "{searchQuery}"</CommandEmpty>
                     )}
 
                     {players && players.length > 0 && (
                       <CommandGroup>
-                        {players.slice(0, 10).map((player) => (
-                          <CommandItem
-                            key={player.player_id}
-                            onSelect={() => handlePlayerSelect(player)}
-                            className="flex items-center justify-between p-3"
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className="flex-1">
-                                <div className="font-medium">
-                                  {formatPlayerName(player)}
-                                </div>
-                                <div className="flex items-center gap-2 mt-1">
-                                  {player.position && (
-                                    <Badge variant="outline" className={cn("text-xs", getPositionColor(player.position))}>
-                                      {player.position}
-                                    </Badge>
-                                  )}
-                                  {player.team && (
-                                    <Badge variant="outline" className="text-xs">
-                                      {player.team}
-                                    </Badge>
-                                  )}
-                                  {player.age && (
-                                    <span className="text-xs text-muted-foreground">
-                                      Age {player.age}
-                                    </span>
-                                  )}
+                        <div className={cn("relative", isPending && "opacity-75")}>
+                          {players.slice(0, 10).map((player) => (
+                            <CommandItem
+                              key={player.player_id}
+                              onSelect={() => handlePlayerSelect(player)}
+                              className="flex items-center justify-between p-3"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="flex-1">
+                                  <div className="font-medium">
+                                    {formatPlayerName(player)}
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-1">
+                                    {player.position && (
+                                      <Badge variant="outline" className={cn("text-xs", getPositionColor(player.position))}>
+                                        {player.position}
+                                      </Badge>
+                                    )}
+                                    {player.team && (
+                                      <Badge variant="outline" className="text-xs">
+                                        {player.team}
+                                      </Badge>
+                                    )}
+                                    {player.age && (
+                                      <span className="text-xs text-muted-foreground">
+                                        Age {player.age}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
+                              <Check
+                                className={cn(
+                                  "h-4 w-4",
+                                  selectedPlayer?.player_id === player.player_id
+                                    ? "opacity-100"
+                                    : "opacity-0"
+                                )}
+                              />
+                            </CommandItem>
+                          ))}
+                          {isPending && (
+                            <div className="absolute top-0 right-0 p-2">
+                              <div className="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
                             </div>
-                            <Check
-                              className={cn(
-                                "h-4 w-4",
-                                selectedPlayer?.player_id === player.player_id
-                                  ? "opacity-100"
-                                  : "opacity-0"
-                              )}
-                            />
-                          </CommandItem>
-                        ))}
+                          )}
+                        </div>
                       </CommandGroup>
                     )}
                   </CommandList>
