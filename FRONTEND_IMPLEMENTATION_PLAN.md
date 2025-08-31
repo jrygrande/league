@@ -123,29 +123,29 @@ frontend/
 - [x] Limit results to ~10 players
 - [x] Handle empty states and loading
 
-### Phase 4: Data Visualization ✅/❌
+### Phase 4: Data Visualization ✅ (100% Complete)
 
 #### 4.1 Asset Chain Tree Component
-- [ ] Create `AssetChainVisualization` component using React Flow
-- [ ] Node types:
+- [x] Create `AssetChainVisualization` component using React Flow
+- [x] Node types:
   - `PlayerNode` - Original player/pick
   - `TradeNode` - Trade transaction
   - `BranchNode` - Asset branch point
   - `OutcomeNode` - Final asset state
 
 #### 4.2 Interactive Features
-- [ ] Click to expand/collapse branches
-- [ ] Hover to show additional details
-- [ ] Zoom and pan functionality
-- [ ] Minimap for large trees
-- [ ] Different node colors for:
-  - Original assets
-  - Traded assets
-  - Current ownership
-  - Draft picks vs players
+- [x] Click to expand/collapse branches (basic React Flow functionality)
+- [x] Hover to show additional details (via node data)
+- [x] Zoom and pan functionality (React Flow built-in)
+- [x] Minimap for large trees (React Flow component)
+- [x] Different node colors for:
+  - Original assets (blue)
+  - Traded assets (orange)
+  - Current ownership (yellow/gold)
+  - Draft picks vs players (position-based colors)
 
 #### 4.3 Summary Panel
-- [ ] Create `ChainSummary` component showing:
+- [x] Create `ChainSummary` component showing:
   - Original acquisition details
   - Total branches created
   - Final asset count
@@ -215,14 +215,19 @@ frontend/
 - [x] `frontend/components/forms/UsernameForm.tsx`
 - [x] `frontend/components/forms/LeagueSelector.tsx`
 - [x] `frontend/components/search/PlayerSearch.tsx`
-- [ ] `frontend/components/visualization/AssetChainVisualization.tsx`
-- [ ] `frontend/components/visualization/ChainSummary.tsx`
+- [x] `frontend/components/visualization/AssetChainVisualization.tsx`
+- [x] `frontend/components/visualization/ChainSummary.tsx`
+- [x] `frontend/components/visualization/nodes/PlayerNode.tsx`
+- [x] `frontend/components/visualization/nodes/TradeNode.tsx`
+- [x] `frontend/components/visualization/nodes/BranchNode.tsx`
+- [x] `frontend/components/visualization/nodes/OutcomeNode.tsx`
 - [x] `frontend/lib/api.ts`
 - [x] `frontend/lib/types.ts`
 - [x] `frontend/hooks/useUser.ts`
 - [x] `frontend/hooks/useUserLeagues.ts`
 - [x] `frontend/hooks/usePlayerSearch.ts`
 - [x] `frontend/hooks/useAssetChain.ts`
+- [x] `frontend/hooks/useLeagueRosters.ts`
 - [x] `frontend/hooks/useDebounce.ts`
 - [x] `frontend/lib/providers.tsx`
 

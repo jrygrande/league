@@ -2880,3 +2880,97 @@ async def trace_asset_genealogy_from_graph(league_id: str, root_asset_id: str) -
         trade_network_stats=network_stats,
         generation_depth=max_depth
     )
+
+
+async def get_all_user_league_chains(username: str):
+    """
+    Get all leagues the user has ever participated in, grouped by league history chains.
+    This eliminates the need for season selection by showing all leagues across all time.
+    """
+    import asyncio
+    from datetime import datetime
+    
+    # Get user info
+    user_data = await client.get_user_by_username(username)
+    if not user_data:
+        raise ValueError(f"User {username} not found")
+    
+    user_id = user_data["user_id"]
+    current_year = datetime.now().year
+    
+    # Fetch leagues from multiple recent seasons (last 10 years)
+    seasons = [str(current_year - i) for i in range(10)]
+    league_tasks = [client.get_leagues_for_user(user_id, season) for season in seasons]
+    all_seasons_leagues = await asyncio.gather(*league_tasks, return_exceptions=True)
+    
+    # Collect all leagues, avoiding duplicates
+    all_leagues = {}  # league_id -> league_data
+    
+    for season_leagues in all_seasons_leagues:
+        if isinstance(season_leagues, list):
+            for league_data in season_leagues:
+                league_id = league_data.get("league_id")
+                if league_id and league_id not in all_leagues:
+                    all_leagues[league_id] = league_data
+    
+    # Group leagues by their history chains
+    league_chains = {}  # base_league_id -> chain_info
+    processed_leagues = set()
+    
+    for league_id, league_data in all_leagues.items():
+        if league_id in processed_leagues:
+            continue
+            
+        # Get the full history chain for this league
+        try:
+            history_data = await client.get_league_history(league_id)
+            if not history_data:
+                continue
+                
+            # Find the most recent (current) league in the chain
+            current_league = history_data[0]  # get_league_history returns newest first
+            base_league_id = current_league["league_id"]
+            
+            # Extract all seasons and league_ids in the chain
+            seasons_in_chain = []
+            league_ids_in_chain = []
+            
+            for historical_league in history_data:
+                season = historical_league.get("season")
+                hist_league_id = historical_league.get("league_id")
+                if season and hist_league_id:
+                    seasons_in_chain.append(season)
+                    league_ids_in_chain.append(hist_league_id)
+                    processed_leagues.add(hist_league_id)
+            
+            # Create the chain info
+            if seasons_in_chain:
+                league_chains[base_league_id] = {
+                    "base_league_id": base_league_id,
+                    "name": current_league.get("name", "Unknown League"),
+                    "seasons": sorted(seasons_in_chain),  # Sort chronologically
+                    "league_ids": league_ids_in_chain,
+                    "most_recent_season": max(seasons_in_chain),
+                    "total_seasons": len(seasons_in_chain),
+                    "status": current_league.get("status", "unknown"),
+                    "total_rosters": current_league.get("total_rosters", 0)
+                }
+                
+        except Exception as e:
+            # If we can't get history, treat as single-season league
+            league_chains[league_id] = {
+                "base_league_id": league_id,
+                "name": league_data.get("name", "Unknown League"),
+                "seasons": [league_data.get("season", "unknown")],
+                "league_ids": [league_id],
+                "most_recent_season": league_data.get("season", "unknown"),
+                "total_seasons": 1,
+                "status": league_data.get("status", "unknown"),
+                "total_rosters": league_data.get("total_rosters", 0)
+            }
+            processed_leagues.add(league_id)
+    
+    return {
+        "username": username,
+        "league_chains": list(league_chains.values())
+    }

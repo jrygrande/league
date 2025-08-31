@@ -53,6 +53,22 @@ async def get_leagues_for_user(username: str, season: str):
     leagues_data = await sleeper_service.client.get_leagues_for_user(user_id, season)
     return [League(**league) for league in leagues_data]
 
+@app.get("/user/{username}/all-leagues")
+async def get_all_leagues_for_user(username: str):
+    """Get all leagues the user has ever participated in, grouped by league history chains."""
+    return await sleeper_service.get_all_user_league_chains(username)
+
+@app.get("/league/{league_id}/full-history")
+async def get_league_full_history(league_id: str):
+    """Get the complete history chain for a league using previous_league_id traversal."""
+    league_history_data = await sleeper_service.client.get_league_history(league_id)
+    if not league_history_data:
+        raise HTTPException(status_code=404, detail="League not found or has no history")
+    return {
+        "current_league_id": league_id,
+        "leagues": [League(**league) for league in league_history_data]
+    }
+
 
 @app.get("/league/{league_id}/drafts", response_model=List[Draft])
 async def get_league_drafts(league_id: str):
