@@ -1,9 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { UsernameForm, LeagueSelector } from "@/components/forms"
 import { PlayerSearch } from "@/components/search"
-import { User, League, Player } from "@/lib/types"
+import { AssetChainVisualization } from "@/components/visualization/AssetChainVisualization"
+import { ChainSummary } from "@/components/visualization/ChainSummary"
+import { User, League, Player, Roster } from "@/lib/types"
+import { useLeagueRosters } from "@/hooks/useLeagueRosters"
+import { useAssetChain } from "@/hooks/useAssetChain"
 import { Button } from "@/components/ui/button"
 import { ArrowLeft } from "lucide-react"
 
@@ -12,6 +16,18 @@ export default function Home() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
   const [selectedLeague, setSelectedLeague] = useState<League | null>(null)
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
+  const [userRoster, setUserRoster] = useState<Roster | null>(null)
+
+  // Fetch rosters when league is selected
+  const { data: rosters } = useLeagueRosters(selectedLeague?.league_id || '')
+
+  // Update userRoster when rosters data changes
+  useEffect(() => {
+    if (rosters && selectedUser && selectedLeague) {
+      const userRosterInLeague = rosters.find(roster => roster.owner_id === selectedUser.user_id)
+      setUserRoster(userRosterInLeague || null)
+    }
+  }, [rosters, selectedUser, selectedLeague])
 
   const handleUserFound = (user: User) => {
     setSelectedUser(user)
@@ -21,6 +37,12 @@ export default function Home() {
   const handleLeagueSelected = (league: League) => {
     setSelectedLeague(league)
     setCurrentStep('player')
+    
+    // Find user's roster in this league (will be set when rosters are loaded)
+    if (rosters && selectedUser) {
+      const userRosterInLeague = rosters.find(roster => roster.owner_id === selectedUser.user_id)
+      setUserRoster(userRosterInLeague || null)
+    }
   }
 
   const handlePlayerSelected = (player: Player) => {
@@ -50,6 +72,7 @@ export default function Home() {
     setSelectedUser(null)
     setSelectedLeague(null)
     setSelectedPlayer(null)
+    setUserRoster(null)
   }
 
   return (
@@ -131,25 +154,48 @@ export default function Home() {
               <PlayerSearch onPlayerSelected={handlePlayerSelected} />
             )}
 
-            {currentStep === 'results' && selectedUser && selectedLeague && selectedPlayer && (
-              <div className="w-full max-w-2xl">
-                <div className="bg-white rounded-lg border shadow-sm p-8 text-center">
-                  <h2 className="text-2xl font-bold text-gray-900 mb-4">
-                    Analysis Coming Soon!
-                  </h2>
-                  <div className="space-y-2 text-left bg-gray-50 p-4 rounded-lg mb-6">
-                    <p><strong>User:</strong> {selectedUser.display_name || selectedUser.username}</p>
-                    <p><strong>League:</strong> {selectedLeague.name} ({selectedLeague.season})</p>
-                    <p><strong>Player:</strong> {selectedPlayer.full_name || `${selectedPlayer.first_name} ${selectedPlayer.last_name}`}</p>
+            {currentStep === 'results' && selectedUser && selectedLeague && selectedPlayer && userRoster && (
+              <div className="w-full max-w-6xl space-y-6">
+                {/* Header with basic info */}
+                <div className="bg-white rounded-lg border shadow-sm p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-2xl font-bold text-gray-900">
+                      Asset Chain Analysis
+                    </h2>
+                    <Button onClick={reset} variant="outline">
+                      Start New Analysis
+                    </Button>
                   </div>
-                  <p className="text-gray-600 mb-6">
-                    The asset chain visualization will be implemented in Phase 4 of the development process.
-                    This will show the complete trade lineage and asset history for the selected player.
-                  </p>
-                  <Button onClick={reset} className="w-full">
-                    Start New Analysis
-                  </Button>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium text-gray-600">User:</span>{' '}
+                      {selectedUser.display_name || selectedUser.username}
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-600">League:</span>{' '}
+                      {selectedLeague.name} ({selectedLeague.season})
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-600">Player:</span>{' '}
+                      {selectedPlayer.full_name || `${selectedPlayer.first_name} ${selectedPlayer.last_name}`}
+                    </div>
+                  </div>
                 </div>
+
+                {/* Asset Chain Visualization */}
+                <AssetChainVisualization
+                  leagueId={selectedLeague.league_id}
+                  rosterId={userRoster.roster_id}
+                  assetId={selectedPlayer.player_id}
+                  assetName={selectedPlayer.full_name || `${selectedPlayer.first_name} ${selectedPlayer.last_name}`}
+                />
+
+                {/* Chain Summary - only show if we have asset chain data */}
+                <AssetChainSummaryWrapper
+                  leagueId={selectedLeague.league_id}
+                  rosterId={userRoster.roster_id}
+                  assetId={selectedPlayer.player_id}
+                />
               </div>
             )}
           </div>
@@ -157,4 +203,23 @@ export default function Home() {
       </div>
     </div>
   )
+}
+
+// Helper component to conditionally render ChainSummary
+function AssetChainSummaryWrapper({ 
+  leagueId, 
+  rosterId, 
+  assetId 
+}: { 
+  leagueId: string
+  rosterId: number
+  assetId: string 
+}) {
+  const { data: assetChain } = useAssetChain(leagueId, rosterId, assetId)
+  
+  if (!assetChain) {
+    return null
+  }
+  
+  return <ChainSummary assetChain={assetChain} />
 }

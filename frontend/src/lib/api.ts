@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios'
-import { User, League, Player, ComprehensiveAssetChain } from './types'
+import { User, League, Player, Roster, ComprehensiveAssetChain } from './types'
 
 class ApiClient {
   private client: AxiosInstance
@@ -50,6 +50,12 @@ class ApiClient {
 
   async getUserLeagues(username: string, season: string): Promise<League[]> {
     const response = await this.client.get(`/user/${username}/leagues/${season}`)
+    return response.data || []
+  }
+
+  // League endpoints
+  async getLeagueRosters(leagueId: string): Promise<Roster[]> {
+    const response = await this.client.get(`/league/${leagueId}/rosters`)
     return response.data || []
   }
 

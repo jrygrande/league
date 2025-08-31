@@ -37,6 +37,17 @@ export interface DraftPickMovement {
   league_id?: string
 }
 
+export interface Roster {
+  roster_id: number
+  league_id: string
+  owner_id?: string
+  players?: string[]
+  starters?: string[]
+  reserve?: string[]
+  settings?: Record<string, any>
+  metadata?: Record<string, any>
+}
+
 export interface Transaction {
   transaction_id: string
   league_id: string
@@ -109,6 +120,7 @@ export interface ApiError {
 export const QUERY_KEYS = {
   user: (username: string) => ['user', username] as const,
   userLeagues: (username: string, season: string) => ['user', username, 'leagues', season] as const,
+  leagueRosters: (leagueId: string) => ['league', leagueId, 'rosters'] as const,
   players: () => ['players'] as const,
   playerSearch: (query: string) => ['players', 'search', query] as const,
   assetChain: (leagueId: string, rosterId: number, assetId: string) => 
