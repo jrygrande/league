@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useEffect } from 'react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -79,6 +79,18 @@ export function AssetChainVisualization({
   const onConnect = useCallback((params: Connection) => {
     setEdges((eds) => addEdge(params, eds))
   }, [setEdges])
+
+  // Update nodes and edges when data changes and trigger fitView
+  useEffect(() => {
+    if (nodes.length > 0) {
+      setNodes(nodes)
+      setEdges(edges)
+      // Small delay to ensure nodes are rendered before fitting view
+      setTimeout(() => {
+        window.dispatchEvent(new Event('resize'))
+      }, 100)
+    }
+  }, [nodes, edges, setNodes, setEdges])
 
   if (isLoading) {
     return (
@@ -175,29 +187,31 @@ export function AssetChainVisualization({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="w-full h-96 border rounded-lg overflow-hidden">
+          <div className="w-full border rounded-lg overflow-hidden" style={{height: '600px'}}>
             <ReactFlowProvider>
-              <ReactFlow
-                nodes={nodesState}
-                edges={edgesState}
-                onNodesChange={onNodesChange}
-                onEdgesChange={onEdgesChange}
-                onConnect={onConnect}
-                nodeTypes={nodeTypes}
-                fitView
-                attributionPosition="bottom-left"
-                defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
-                minZoom={0.1}
-                maxZoom={2}
-                style={{ width: '100%', height: '100%' }}
-              >
-                <Controls />
-                <MiniMap />
-                <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
-                <Panel position="top-right" className="bg-white p-2 rounded text-xs text-gray-500">
-                  Debug: {nodes.length} nodes, {edges.length} edges
-                </Panel>
-              </ReactFlow>
+              <div style={{ width: '100%', height: '100%' }}>
+                <ReactFlow
+                  nodes={nodesState}
+                  edges={edgesState}
+                  onNodesChange={onNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onConnect={onConnect}
+                  nodeTypes={nodeTypes}
+                  fitView
+                  attributionPosition="bottom-left"
+                  defaultViewport={{ x: 0, y: 0, zoom: 0.5 }}
+                  minZoom={0.1}
+                  maxZoom={2}
+                  style={{ width: '100%', height: '100%' }}
+                >
+                  <Controls />
+                  <MiniMap />
+                  <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
+                  <Panel position="top-right" className="bg-white p-2 rounded text-xs text-gray-500">
+                    Debug: {nodes.length} nodes, {edges.length} edges
+                  </Panel>
+                </ReactFlow>
+              </div>
             </ReactFlowProvider>
           </div>
         </CardContent>
